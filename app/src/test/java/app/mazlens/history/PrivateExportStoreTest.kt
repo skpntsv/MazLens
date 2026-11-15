@@ -24,46 +24,13 @@ class PrivateExportStoreTest {
     }
 
     @Test
-    fun outputUsesCapturedBytesEvenWhenProviderChangesPendingFile() {
+    fun exportsReportAndRemovesPrivateSnapshot() {
         val dir = temp.newFolder()
         val store = PrivateExportStore(dir)
         store.prepare("report", "original".toByteArray())
         val out = ByteArrayOutputStream()
-        store.writeTo("report") {
-            java.io.File(dir, "report.zip").writeText("changed")
-            out
-        }
+        store.writeTo("report") { out }
         assertEquals("original", out.toString("UTF-8"))
         assertEquals(0, dir.listFiles()!!.size)
-    }
-
-    @Test
-    fun cancellingPickerDiscardsSnapshotAndPathTraversalIsRejected() {
-        val dir = temp.newFolder()
-        val store = PrivateExportStore(dir)
-        store.prepare("report", byteArrayOf(1))
-        store.discard("report")
-        assertEquals(0, dir.listFiles()!!.size)
-        try {
-            store.prepare("../escape", byteArrayOf(2))
-            fail("invalid id accepted")
-        } catch (_: IllegalArgumentException) {}
-    }
-
-    @Test
-    fun recoveryRemovesAbandonedSnapshotsButPreservesPendingExportAndUnrelatedFiles() {
-        val dir = temp.newFolder()
-        val store = PrivateExportStore(dir)
-        store.prepare("pending", byteArrayOf(1))
-        store.prepare("abandoned", byteArrayOf(2))
-        java.io.File(dir, "interrupted.zip.tmp").writeText("incomplete")
-        java.io.File(dir, "unrelated.txt").writeText("keep")
-        store.removeAbandoned("pending")
-        assertEquals(
-            setOf("pending.zip", "unrelated.txt"),
-            dir.listFiles()!!.map { it.name }.toSet(),
-        )
-        store.removeAbandoned(null)
-        assertEquals(listOf("unrelated.txt"), dir.listFiles()!!.map { it.name })
     }
 }

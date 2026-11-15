@@ -21,7 +21,7 @@ Run the affected tests while developing. Before submitting a change:
 
 Run `./gradlew :app:connectedDebugAndroidTest` on an emulator for changes to UI, lifecycle, permissions, FileProvider or playback. These tests use loopback sockets and synthetic media; they do not connect to a car.
 
-Add tests for observable behavior, protocol handling, data integrity or a reproduced regression. Do not add tests solely for getters, text changes or formatting. Remove a test when the implementation it protects is removed.
+Keep the MVP suite small: authentication, live playback, archive download, file integrity, offline playback/sharing and cancellation. Add a test for a reproduced bug or a new user-visible behavior with a meaningful failure risk; prefer extending an existing scenario when it covers the same behavior. Do not add tests solely for getters, text changes, layout details or every combination of helper flags. Remove duplicates, obsolete fixtures and tests when the behavior they protect is removed.
 
 Hardware results should identify the recorder model, firmware and tested function. Never infer support for a family from one unit. A simulated response or successful build does not replace a hardware check.
 

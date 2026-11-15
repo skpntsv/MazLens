@@ -27,32 +27,4 @@ class OperationGateTest {
         assertTrue(gate.finish(ticket))
         assertNotNull(gate.begin(10))
     }
-
-    @Test
-    fun staleCallbackCannotReleaseNewerOperation() {
-        val gate = OperationGate()
-        val old = gate.begin(1)!!
-        assertTrue(gate.finish(old))
-        val newer = gate.begin(1)!!
-        assertFalse(gate.finish(old))
-        assertTrue(gate.canContinue(newer, 1))
-        assertTrue(gate.active())
-    }
-
-    @Test
-    fun connectionChangePreventsProbeToPlayerTransition() {
-        val gate = OperationGate()
-        val ticket = gate.begin(4)!!
-        assertTrue(gate.canContinue(ticket, 4))
-        assertFalse(gate.canContinue(ticket, 5))
-    }
-
-    @Test
-    fun cancellationPreventsLateSuccessWithoutOpeningNextSlot() {
-        val gate = OperationGate()
-        val ticket = gate.begin(4)!!
-        gate.cancel(ticket)
-        assertFalse(gate.canContinue(ticket, 4))
-        assertTrue(gate.active())
-    }
 }

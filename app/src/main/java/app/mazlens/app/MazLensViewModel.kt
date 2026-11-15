@@ -59,7 +59,6 @@ sealed interface UiEvent {
     data class OpenOriginal(val file: File, val mime: String, val share: Boolean) : UiEvent
 }
 
-/** Coordinates features; composables never own a socket, file or connection. */
 class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
     AndroidViewModel(application), WifiDirectController.Listener {
     private val app = application
@@ -87,7 +86,7 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
     @Volatile private var store: HistoryStore? = null
     @Volatile private var connectionEpoch = 0L
     @Volatile private var activeProbe: AutoCloseable? = null
-    @Volatile private var activeVideoApi: RecorderSession? = null
+    @Volatile private var activeRecorderSession: RecorderSession? = null
     private var current: Operation? = null
     private var foreground = false
     private var cleared = false
@@ -108,7 +107,7 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
     ) {
         val modelName = if (connection.name.contains("C9KA")) "C9KA_V6_580" else "C9K1_V6_580"
         var route: P2pSocketProvider? = null
-        var videoApi: RecorderSession? = null
+        var session: RecorderSession? = null
         var archiveEntry: RecorderFile? = null
         var cameraRear = false
         var checkingPassword = false
@@ -281,12 +280,20 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
         }
     }
 
-    override fun connection(name: String, address: String?, networkInterface: String?) {
+    override fun connection(
+        name: String,
+        address: String?,
+        networkInterface: String?,
+        recorderId: String,
+    ) {
         val host = address.orEmpty()
         val iface = networkInterface.orEmpty()
         val before = _state.value.connection
         val changed =
-            before.address != host || before.networkInterface != iface || before.name != name
+            before.address != host ||
+                before.networkInterface != iface ||
+                before.name != name ||
+                before.recorderId != recorderId
         if (changed) {
             connectionEpoch++
             cancelActive("Соединение с регистратором изменилось")
@@ -299,6 +306,7 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
                         name = name,
                         address = host,
                         networkInterface = iface,
+                        recorderId = recorderId,
                         connecting = wifi.operationPending(),
                         status =
                             if (host.isNotEmpty()) "Подключено к регистратору"
@@ -316,7 +324,7 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
                     if (changed)
                         it.archive.copy(
                             files = emptyList(),
-                            recorderName = "",
+                            recorderId = "",
                             loading = false,
                             message = "Обновите список этого регистратора",
                             problem = null,
@@ -428,7 +436,7 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
     }
 
     private fun switchVideoCamera(op: Operation, rear: Boolean) {
-        val api = op.videoApi ?: return
+        val session = op.session ?: return
         val route = op.route ?: return
         // Keep the owned API session and heartbeat reader; replace only the RTSP player.
         op.switchingCamera = true
@@ -461,8 +469,12 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
                     runCatching {
                         if (op.finalizing || !gate.canContinue(op.ticket, connectionEpoch))
                             throw java.io.IOException("Переключение отменено")
-                        val selected = api.selectCamera(rear)
-                        if (!selected.success) throw java.io.IOException(selected.summary)
+                        val selected = session.selectCamera(rear)
+                        if (!selected.success) {
+                            if (selected.timedOut)
+                                throw java.net.SocketTimeoutException(selected.summary)
+                            throw java.io.IOException(selected.summary)
+                        }
                         if (op.finalizing || !gate.canContinue(op.ticket, connectionEpoch))
                             throw java.io.IOException("Переключение отменено")
                         val probe = RtspProbe(route.socketMaker, Consumer { diagnostic(it) })
@@ -495,6 +507,7 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
             }
             val answer =
                 result.getOrElse {
+                    op.record = op.record.copy(timedOut = it is java.net.SocketTimeoutException)
                     finishVideo(op, it.message?.take(220) ?: "Не удалось переключить камеру", false)
                     return@launch
                 }
@@ -502,6 +515,7 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
                 op.record.copy(
                     trace = op.record.trace + "\nRTSP after camera switch:\n" + answer.trace,
                     response = answer.response,
+                    timedOut = answer.timedOut,
                 )
             _state.update {
                 it.copy(
@@ -524,13 +538,18 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
 
     fun downloadRecording(id: String) {
         val state = _state.value
-        if (state.archive.recorderName != state.connection.name) return
+        if (state.archive.recorderId != state.connection.recorderId) return
         val entry = state.archive.files.firstOrNull { it.id == id } ?: return
         runArchive(entry)
     }
 
     private fun runArchive(entry: RecorderFile?) {
         val state = _state.value
+        if (state.connection.recorderId.isBlank()) {
+            message("Не удалось определить регистратор. Подключитесь заново.")
+            return
+        }
+        if (entry != null && entry.recorderId != state.connection.recorderId) return
         val password =
             VideoCredentials.select(state.passwordInput, state.connection.name, state.history)
         if (password == null) {
@@ -654,17 +673,16 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
     }
 
     private fun execute(op: Operation, mode: AccessProbe.Mode, password: String?): WorkResult {
-        var record = op.record
         var rtsp: RtspProbe.Outcome? = null
         try {
             val history = store ?: error("history unavailable")
-            history.save(record)
+            history.save(op.record)
             reloadHistory()
-            if (!gate.canContinue(op.ticket, connectionEpoch)) return saveCancelled(op, record)
+            if (!gate.canContinue(op.ticket, connectionEpoch)) return saveCancelled(op, op.record)
             val route = P2pSocketProvider(app, op.connection.networkInterface)
             op.route = route
-            record =
-                record.copy(
+            op.record =
+                op.record.copy(
                     networkSnapshot =
                         NetworkSnapshot.capture(
                             app,
@@ -674,169 +692,31 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
                             route.routeDescription,
                         )
                 )
-            val log = Consumer<String> { diagnostic(it) }
-            when (record.kind) {
-                AttemptKind.BASELINE -> {
-                    val probe = RecorderProbe(route.socketMaker, log)
-                    activeProbe = probe
-                    if (!gate.canContinue(op.ticket, connectionEpoch)) probe.close()
-                    val answer = probe.query(op.connection.address, 7878, 8787, 8000)
-                    record =
-                        record.copy(
-                            summary = answer.description(),
-                            response = answer.raw(),
-                            trace = "SEND {\"token\":0,\"msg_id\":3}\nRECV ${answer.raw()}\n",
-                            passwordCandidate =
-                                if (answer.hasCandidate()) answer.passwordValue() else "",
-                            status =
-                                when {
-                                    answer.success() -> AttemptStatus.SUCCESS
-                                    answer.state() == "REJECTED" -> AttemptStatus.REJECTED
-                                    else -> AttemptStatus.FAILED
-                                },
-                        )
-                }
-                AttemptKind.ACCESS -> {
-                    val probe = AccessProbe(route.socketMaker, log)
-                    activeProbe = probe
-                    if (!gate.canContinue(op.ticket, connectionEpoch)) probe.close()
-                    val model = op.modelName
-                    val answer =
-                        if (password != null)
-                            probe.queryWithPassword(
-                                op.connection.address,
-                                7878,
-                                8787,
-                                model,
-                                password,
-                                8000,
-                            )
-                        else probe.query(op.connection.address, 7878, 8787, mode, model, 8000)
-                    val status =
-                        AccessConclusion.classify(answer.response, mode, answer.sessionOpened)
-                    val candidate =
-                        answer.password
-                            .takeUnless { it.isBlank() || it.matches(Regex("[*•●]+")) }
-                            .orEmpty()
-                    record =
-                        record.copy(
-                            summary = answer.summary,
-                            trace = answer.trace,
-                            response = answer.response,
-                            passwordCandidate = candidate,
-                            status = status,
-                        )
-                }
-                AttemptKind.VIDEO -> {
-                    val api = newSession(op, route, log)
-                    if (!gate.canContinue(op.ticket, connectionEpoch)) api.close()
-                    val model = op.modelName
-                    val auth =
-                        api.open(
-                            op.connection.address,
-                            7878,
-                            8787,
-                            model,
-                            requireNotNull(password),
-                            8000,
-                        )
-                    record =
-                        record.copy(
-                            summary = auth.summary,
-                            trace = auth.trace,
-                            response = auth.response,
-                            status =
-                                if (auth.code != null && auth.code != 0) AttemptStatus.REJECTED
-                                else AttemptStatus.FAILED,
-                        )
-                    if (auth.opened && gate.canContinue(op.ticket, connectionEpoch)) {
-                        val camera = api.selectCamera(op.cameraRear)
-                        if (!camera.success)
-                            record =
-                                record.copy(
-                                    summary = camera.summary,
-                                    status = AttemptStatus.REJECTED,
-                                )
-                        else {
-                            _state.update {
-                                if (gate.canContinue(op.ticket, connectionEpoch))
-                                    it.copy(
-                                        video =
-                                            it.video.copy(
-                                                message = "Сессия открыта. Проверяю видеопоток…"
-                                            )
-                                    )
-                                else it
-                            }
-                            val probe = RtspProbe(route.socketMaker, log)
-                            activeProbe = probe
-                            if (!gate.canContinue(op.ticket, connectionEpoch)) probe.close()
-                            val answer = probe.query(op.connection.address, 554, 8000)
-                            rtsp = answer
-                            record =
-                                record.copy(
-                                    summary = answer.summary,
-                                    trace = auth.trace + "\nRTSP:\n" + answer.trace,
-                                    response = answer.response,
-                                    status =
-                                        when {
-                                            answer.cancelled -> AttemptStatus.CANCELLED
-                                            answer.authRequired -> AttemptStatus.REJECTED
-                                            answer.videoAdvertised -> AttemptStatus.RUNNING
-                                            else -> AttemptStatus.FAILED
-                                        },
-                                )
-                        }
-                        api.disconnectReason?.let { reason ->
-                            rtsp = null
-                            record =
-                                record.copy(
-                                    summary = RecorderErrors.disconnected(reason),
-                                    status = AttemptStatus.FAILED,
-                                )
-                        }
+            when (op.record.kind) {
+                AttemptKind.BASELINE -> readSettings(op, route)
+                AttemptKind.ACCESS -> checkAccess(op, route, mode, password)
+                AttemptKind.VIDEO ->
+                    openRecorderSession(op, route, requireNotNull(password))?.let {
+                        rtsp = prepareVideo(op, route, it)
                     }
-                }
-                AttemptKind.ARCHIVE -> {
-                    val api = newSession(op, route, log)
-                    if (!gate.canContinue(op.ticket, connectionEpoch)) api.close()
-                    val model = op.modelName
-                    val auth =
-                        api.open(
-                            op.connection.address,
-                            7878,
-                            8787,
-                            model,
-                            requireNotNull(password),
-                            8000,
-                        )
-                    record =
-                        record.copy(
-                            summary = auth.summary,
-                            trace = auth.trace,
-                            response = auth.response,
-                            status =
-                                if (auth.code != null && auth.code != 0) AttemptStatus.REJECTED
-                                else AttemptStatus.FAILED,
-                        )
-                    if (auth.opened && gate.canContinue(op.ticket, connectionEpoch))
-                        record = readArchive(op, api, record)
-                }
+                AttemptKind.ARCHIVE ->
+                    openRecorderSession(op, route, requireNotNull(password))?.let {
+                        readArchive(op, it)
+                    }
             }
             if (!gate.canContinue(op.ticket, connectionEpoch))
-                record =
-                    record.copy(
+                op.record =
+                    op.record.copy(
                         status = AttemptStatus.CANCELLED,
                         summary = "Проверка отменена. Полный обмен сохранён.",
                     )
         } catch (error: Exception) {
-            record =
-                record.copy(
-                    status =
-                        if (gate.canContinue(op.ticket, connectionEpoch)) AttemptStatus.FAILED
-                        else AttemptStatus.CANCELLED,
+            val active = gate.canContinue(op.ticket, connectionEpoch)
+            op.record =
+                op.record.copy(
+                    status = if (active) AttemptStatus.FAILED else AttemptStatus.CANCELLED,
                     summary =
-                        if (gate.canContinue(op.ticket, connectionEpoch))
+                        if (active)
                             op.disconnectReason
                                 ?: when (error) {
                                     is java.io.IOException ->
@@ -844,7 +724,11 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
                                     else -> "Проверка прервана: ${error.javaClass.simpleName}"
                                 }
                         else "Проверка отменена",
-                    trace = record.trace + "\nPRIVATE ERROR: " + Log.getStackTraceString(error),
+                    timedOut =
+                        active &&
+                            op.disconnectReason == null &&
+                            error is java.net.SocketTimeoutException,
+                    trace = op.record.trace + "\nPRIVATE ERROR: " + Log.getStackTraceString(error),
                 )
         } finally {
             runCatching { activeProbe?.close() }
@@ -855,65 +739,189 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
                         (rtsp?.videoAdvertised != true ||
                             !gate.canContinue(op.ticket, connectionEpoch)))
             )
-                record = finishVideoApi(op, record)
+                op.record = finishRecorderSession(op, op.record)
             if (op.record.kind == AttemptKind.ARCHIVE) reloadSaved()
         }
-        persist(record)
-        return WorkResult(record, rtsp)
+        persist(op.record)
+        return WorkResult(op.record, rtsp)
     }
 
-    private fun newSession(
+    private fun readSettings(op: Operation, route: P2pSocketProvider) {
+        val probe = RecorderProbe(route.socketMaker, Consumer(::diagnostic))
+        activeProbe = probe
+        if (!gate.canContinue(op.ticket, connectionEpoch)) probe.close()
+        val answer = probe.query(op.connection.address, 7878, 8787, 8000)
+        op.record =
+            op.record.copy(
+                summary = answer.description(),
+                response = answer.raw(),
+                trace = "SEND {\"token\":0,\"msg_id\":3}\nRECV ${answer.raw()}\n",
+                passwordCandidate = if (answer.hasCandidate()) answer.passwordValue() else "",
+                status =
+                    when {
+                        answer.success() -> AttemptStatus.SUCCESS
+                        answer.state() == "REJECTED" -> AttemptStatus.REJECTED
+                        else -> AttemptStatus.FAILED
+                    },
+            )
+    }
+
+    private fun checkAccess(
         op: Operation,
         route: P2pSocketProvider,
-        log: Consumer<String>,
-    ): RecorderSession {
-        val api =
-            RecorderSession(route.socketMaker, log) { reason ->
+        mode: AccessProbe.Mode,
+        password: String?,
+    ) {
+        val probe = AccessProbe(route.socketMaker, Consumer(::diagnostic))
+        activeProbe = probe
+        if (!gate.canContinue(op.ticket, connectionEpoch)) probe.close()
+        val answer =
+            if (password != null)
+                probe.queryWithPassword(
+                    op.connection.address,
+                    7878,
+                    8787,
+                    op.modelName,
+                    password,
+                    8000,
+                )
+            else probe.query(op.connection.address, 7878, 8787, mode, op.modelName, 8000)
+        op.record =
+            op.record.copy(
+                summary = answer.summary,
+                trace = answer.trace,
+                response = answer.response,
+                passwordCandidate =
+                    answer.password
+                        .takeUnless { it.isBlank() || it.matches(Regex("[*•●]+")) }
+                        .orEmpty(),
+                status = AccessConclusion.classify(answer.response, mode, answer.sessionOpened),
+                timedOut = answer.timedOut,
+            )
+    }
+
+    private fun openRecorderSession(
+        op: Operation,
+        route: P2pSocketProvider,
+        password: String,
+    ): RecorderSession? {
+        val session =
+            RecorderSession(route.socketMaker, Consumer(::diagnostic)) { reason ->
                 val readable = RecorderErrors.disconnected(reason)
                 op.disconnectReason = readable
                 main.post {
-                    if (current?.ticket == op.ticket && !op.finalizing && op.playerStarted) {
+                    if (current?.ticket == op.ticket && !op.finalizing && op.playerStarted)
                         finishVideo(op, readable, false)
-                    }
                 }
             }
-        op.videoApi = api
-        activeVideoApi = api
-        return api
+        op.session = session
+        activeRecorderSession = session
+        if (!gate.canContinue(op.ticket, connectionEpoch)) session.close()
+        val auth = session.open(op.connection.address, 7878, 8787, op.modelName, password, 8000)
+        op.record =
+            op.record.copy(
+                summary = auth.summary,
+                trace = auth.trace,
+                response = auth.response,
+                status =
+                    if (auth.code != null && auth.code != 0) AttemptStatus.REJECTED
+                    else AttemptStatus.FAILED,
+                timedOut = auth.timedOut,
+            )
+        return session.takeIf { auth.opened && gate.canContinue(op.ticket, connectionEpoch) }
     }
 
-    private fun readArchive(
+    private fun prepareVideo(
         op: Operation,
-        api: RecorderSession,
-        record: AttemptRecord,
-    ): AttemptRecord {
+        route: P2pSocketProvider,
+        session: RecorderSession,
+    ): RtspProbe.Outcome? {
+        val camera = session.selectCamera(op.cameraRear)
+        if (!camera.success) {
+            op.record =
+                op.record.copy(
+                    summary = camera.summary,
+                    status =
+                        if (camera.code != null && camera.code != 0) AttemptStatus.REJECTED
+                        else AttemptStatus.FAILED,
+                    timedOut = camera.timedOut,
+                )
+            return null
+        }
+        _state.update {
+            if (gate.canContinue(op.ticket, connectionEpoch))
+                it.copy(video = it.video.copy(message = "Сессия открыта. Проверяю видеопоток…"))
+            else it
+        }
+        val probe = RtspProbe(route.socketMaker, Consumer(::diagnostic))
+        activeProbe = probe
+        if (!gate.canContinue(op.ticket, connectionEpoch)) probe.close()
+        val answer = probe.query(op.connection.address, 554, 8000)
+        op.record =
+            op.record.copy(
+                summary = answer.summary,
+                trace = op.record.trace + "\nRTSP:\n" + answer.trace,
+                response = answer.response,
+                status =
+                    when {
+                        answer.cancelled -> AttemptStatus.CANCELLED
+                        answer.authRequired -> AttemptStatus.REJECTED
+                        answer.videoAdvertised -> AttemptStatus.RUNNING
+                        else -> AttemptStatus.FAILED
+                    },
+                timedOut = answer.timedOut,
+            )
+        session.disconnectReason?.let { reason ->
+            op.record =
+                op.record.copy(
+                    summary = RecorderErrors.disconnected(reason),
+                    status = AttemptStatus.FAILED,
+                    timedOut = false,
+                )
+            return null
+        }
+        return answer
+    }
+
+    private fun readArchive(op: Operation, session: RecorderSession) {
         val entry = op.archiveEntry
-        var partial: File? = null
+        if (entry == null) loadArchiveIndex(op, session) else downloadOriginal(op, session, entry)
+    }
+
+    private fun loadArchiveIndex(op: Operation, session: RecorderSession) {
+        val folder = File(app.cacheDir, "archive-index").apply { mkdirs() }
+        val partial = File.createTempFile("index-", ".part", folder)
         try {
-            if (entry == null) {
-                val folder = File(app.cacheDir, "archive-index").apply { mkdirs() }
-                partial = File.createTempFile("index-", ".part", folder)
-                api.download(ArchiveIndex.PATH, partial, 39L + 32767L * 63L)
-                if (!gate.canContinue(op.ticket, connectionEpoch))
-                    throw java.io.IOException("Чтение списка отменено")
-                val files =
-                    ArchiveIndex.parse(partial.readBytes()).sortedByDescending { it.recordedAt }
-                _state.update {
-                    if (gate.canContinue(op.ticket, connectionEpoch))
-                        it.copy(
-                            archive =
-                                it.archive.copy(files = files, recorderName = op.connection.name)
-                        )
-                    else it
-                }
-                return record.copy(
+            session.download(ArchiveIndex.PATH, partial, 39L + 32767L * 63L)
+            if (!gate.canContinue(op.ticket, connectionEpoch))
+                throw java.io.IOException("Чтение списка отменено")
+            val files =
+                ArchiveIndex.parse(partial.readBytes())
+                    .map { it.copy(recorderId = op.connection.recorderId) }
+                    .sortedByDescending { it.recordedAt }
+            _state.update {
+                if (gate.canContinue(op.ticket, connectionEpoch))
+                    it.copy(
+                        archive =
+                            it.archive.copy(files = files, recorderId = op.connection.recorderId)
+                    )
+                else it
+            }
+            op.record =
+                op.record.copy(
                     summary = "Записей в архиве: ${files.size}",
                     status = AttemptStatus.SUCCESS,
                 )
-            }
-            partial = recordings.createPartial(entry)
+        } finally {
+            partial.delete()
+        }
+    }
+
+    private fun downloadOriginal(op: Operation, session: RecorderSession, entry: RecorderFile) {
+        val partial = recordings.createPartial(entry)
+        try {
             var lastUpdate = 0L
-            api.download(
+            session.download(
                 entry.remotePath,
                 partial,
                 if (entry.size > 0) entry.size else 128L * 1024 * 1024,
@@ -941,14 +949,13 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
             recordings.commit(entry, partial) { publication ->
                 gate.publishIfCurrent(op.ticket, { connectionEpoch }, publication)
             }
-            return record.copy(
-                summary = "Оригинал сохранён на телефоне: ${entry.displayName}",
-                status = AttemptStatus.SUCCESS,
-            )
+            op.record =
+                op.record.copy(
+                    summary = "Оригинал сохранён на телефоне: ${entry.displayName}",
+                    status = AttemptStatus.SUCCESS,
+                )
         } finally {
-            partial?.let { file ->
-                if (entry == null) file.delete() else runCatching { recordings.discard(file) }
-            }
+            runCatching { recordings.discard(partial) }
         }
     }
 
@@ -1074,7 +1081,7 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
                     finishVideo(op, "Маршрут Wi-Fi Direct недоступен", false)
                     return
                 }
-        op.videoApi?.disconnectReason?.let {
+        op.session?.disconnectReason?.let {
             finishVideo(op, RecorderErrors.disconnected(it), false)
             return
         }
@@ -1173,7 +1180,7 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
         val op = current ?: return
         gate.cancel(op.ticket)
         runCatching { activeProbe?.close() }
-        runCatching { activeVideoApi?.close() }
+        runCatching { activeRecorderSession?.close() }
         if (op.playerStarted)
             finishVideo(
                 op,
@@ -1217,22 +1224,24 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
         }
         viewModelScope.launch {
             val finalRecord =
-                withContext(Dispatchers.IO) { finishVideoApi(op, record).also { persist(it) } }
+                withContext(Dispatchers.IO) {
+                    finishRecorderSession(op, record).also { persist(it) }
+                }
             complete(op, finalRecord)
         }
     }
 
-    private fun finishVideoApi(op: Operation, record: AttemptRecord): AttemptRecord {
-        val api = op.videoApi ?: return record
+    private fun finishRecorderSession(op: Operation, record: AttemptRecord): AttemptRecord {
+        val session = op.session ?: return record
         val cleanup =
-            runCatching { api.finish() }
+            runCatching { session.finish() }
                 .exceptionOrNull()
-                ?.let { "API cleanup: ${it.javaClass.simpleName}\n" }
+                ?.let { "Session cleanup: ${it.javaClass.simpleName}\n" }
                 .orEmpty()
-        op.videoApi = null
-        if (activeVideoApi === api) activeVideoApi = null
+        op.session = null
+        if (activeRecorderSession === session) activeRecorderSession = null
         return record.copy(
-            trace = record.trace + "\nПолный обмен сессии:\n" + api.snapshotTrace() + cleanup
+            trace = record.trace + "\nПолный обмен сессии:\n" + session.snapshotTrace() + cleanup
         )
     }
 
@@ -1351,10 +1360,10 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
             runCatching { it.switchingProbe?.close() }
         }
         runCatching { activeProbe?.close() }
-        runCatching { activeVideoApi?.close() }
+        runCatching { activeRecorderSession?.close() }
         preview.stop()
         savedPlayback.stop()
-        wifi.close(false)
+        wifi.close()
         main.removeCallbacksAndMessages(null)
     }
 }

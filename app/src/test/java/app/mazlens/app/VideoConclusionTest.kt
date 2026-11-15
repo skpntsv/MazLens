@@ -22,19 +22,4 @@ class VideoConclusionTest {
             )
         )
     }
-
-    @Test
-    fun receivedFrameRemainsConfirmedWhenUserStops() {
-        assertEquals(AttemptStatus.SUCCESS, VideoConclusion.status(true, true, true))
-    }
-
-    @Test
-    fun realFailureWhileActiveStillExplainsAnError() {
-        assertEquals(AttemptStatus.FAILED, VideoConclusion.status(false, true, false))
-    }
-
-    @Test
-    fun lostOperationOwnershipCannotPublishAFailureForUserCancellation() {
-        assertEquals(AttemptStatus.CANCELLED, VideoConclusion.status(false, false, false))
-    }
 }

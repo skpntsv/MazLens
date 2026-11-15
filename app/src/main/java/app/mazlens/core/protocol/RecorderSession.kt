@@ -30,9 +30,15 @@ class RecorderSession(
         val response: String,
         val trace: String,
         val code: Int?,
+        val timedOut: Boolean = false,
     )
 
-    data class CommandResult(val success: Boolean, val summary: String, val code: Int?)
+    data class CommandResult(
+        val success: Boolean,
+        val summary: String,
+        val code: Int?,
+        val timedOut: Boolean = false,
+    )
 
     data class DownloadResult(val bytes: Long, val md5: String)
 
@@ -78,6 +84,7 @@ class RecorderSession(
             var response = ""
             var code: Int? = null
             var opened = false
+            var timedOut = false
             var summary: String
             try {
                 ensureConnected()
@@ -122,6 +129,7 @@ class RecorderSession(
                 note(summary)
             } catch (error: IOException) {
                 privateError(error)
+                timedOut = error is SocketTimeoutException && !cancelled && disconnectReason == null
                 summary =
                     when {
                         cancelled -> "Подключение отменено."
@@ -137,7 +145,7 @@ class RecorderSession(
                     close()
                 }
             }
-            OpenResult(opened, summary, response, snapshotTrace(), code)
+            OpenResult(opened, summary, response, snapshotTrace(), code, timedOut)
         }
 
     fun selectCamera(rear: Boolean): CommandResult =
@@ -172,8 +180,10 @@ class RecorderSession(
                     }
                 // Protocol replies have no request sequence: a late msg2 must never approve a
                 // retry.
+                val timedOut =
+                    error is SocketTimeoutException && !cancelled && disconnectReason == null
                 close()
-                CommandResult(false, summary, null)
+                CommandResult(false, summary, null, timedOut)
             }
         }
 
@@ -326,7 +336,7 @@ class RecorderSession(
         closeSockets()
     }
 
-    /** Bounded private diagnostic content. Only explicitly exported reports consume this. */
+    /** Bounded private diagnostic content, retained in history and explicit report exports. */
     fun snapshotTrace(): String {
         val saved = synchronized(trace) { trace.toString() }
         val tail =

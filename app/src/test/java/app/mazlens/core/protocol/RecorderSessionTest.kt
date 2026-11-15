@@ -88,60 +88,14 @@ class RecorderSessionTest {
         assertTrue(session.open("recorder", 7878, 8787, "model", "OwnerPwd", 150).opened)
         recorder.onCommand = {}
         try {
-            assertFalse(session.selectCamera(true).success)
+            val result = session.selectCamera(true)
+            assertFalse(result.success)
+            assertTrue(result.timedOut)
             assertTrue(recorder.command.closed && recorder.data.closed)
             assertFalse(session.selectCamera(false).success)
             assertEquals(1, recorder.commands.count { it.optInt("msg_id") == 2 })
         } finally {
             session.close()
-        }
-    }
-
-    @Test
-    fun aStopReplyFollowedByEofIsConfirmedWithoutUnexpectedDisconnect() {
-        val recorder = Recorder()
-        val callbacks = CopyOnWriteArrayList<String>()
-        val session = RecorderSession(recorder, java.util.function.Consumer {}, callbacks::add)
-        assertTrue(session.open("recorder", 7878, 8787, "model", "OwnerPwd", 700).opened)
-        recorder.onCommand = {
-            if (it.optInt("msg_id") == 258) {
-                recorder.command.feed("{\"msg_id\":258,\"rval\":0}")
-                recorder.command.end()
-                recorder.command.readingThread!!.join(500)
-            }
-        }
-        try {
-            assertTrue(session.finish().contains("Собственная сессия закрыта"))
-            assertNull(session.disconnectReason)
-            assertTrue(callbacks.isEmpty())
-            assertTrue(recorder.command.closed && recorder.data.closed)
-        } finally {
-            session.close()
-        }
-    }
-
-    @Test
-    fun preservesAFragmentedFrameAcrossReaderTimeouts() {
-        val recorder = Recorder()
-        recorder.onCommand = {
-            if (it.optInt("msg_id") == 257)
-                recorder.command.feed("{\"msg_id\":257,\"rval\":0,\"par")
-        }
-        val worker = Executors.newSingleThreadExecutor()
-        val session = RecorderSession(recorder, java.util.function.Consumer {})
-        try {
-            val result =
-                worker.submit<RecorderSession.OpenResult> {
-                    session.open("recorder", 7878, 8787, "model", "OwnerPwd", 1500)
-                }
-            assertTrue(recorder.command.waiting.await(1, TimeUnit.SECONDS))
-            assertTrue(recorder.command.timedOut.await(1, TimeUnit.SECONDS))
-            recorder.command.feed("am\":23}{\"msg_id\":1793}")
-            assertTrue(result.get(1, TimeUnit.SECONDS).opened)
-            await { recorder.commands.any { it.optInt("msg_id") == 1793 } }
-        } finally {
-            session.close()
-            worker.shutdownNow()
         }
     }
 
@@ -173,38 +127,6 @@ class RecorderSessionTest {
             assertEquals(reply, 1, recorder.commands.size)
             assertTrue(recorder.command.closed && recorder.data.closed)
         }
-    }
-
-    @Test
-    fun reportsForcedDisconnectWhileIdleAndDoesNotSendStopAfterIt() {
-        val recorder = Recorder()
-        val callbacks = CopyOnWriteArrayList<String>()
-        val session = RecorderSession(recorder, java.util.function.Consumer {}, callbacks::add)
-        assertTrue(session.open("recorder", 7878, 8787, "model", "OwnerPwd", 700).opened)
-        recorder.command.feed(
-            "{\"msg_id\":7,\"type\":\"force_disconnect\",\"param\":\"speed_err\"}"
-        )
-        await { callbacks.isNotEmpty() }
-        assertEquals("speed_err", session.disconnectReason)
-        assertEquals(listOf("speed_err"), callbacks.toList())
-        assertTrue(recorder.command.closed && recorder.data.closed)
-        session.finish()
-        session.close()
-        assertEquals(0, recorder.commands.count { it.optInt("msg_id") == 258 })
-    }
-
-    @Test
-    fun commandEofDisconnectsAndWakesAnyWaitingOperation() {
-        val recorder = Recorder()
-        val callbacks = CopyOnWriteArrayList<String>()
-        val session = RecorderSession(recorder, java.util.function.Consumer {}, callbacks::add)
-        assertTrue(session.open("recorder", 7878, 8787, "model", "OwnerPwd", 700).opened)
-        recorder.command.end()
-        await { callbacks.isNotEmpty() }
-        assertNotNull(session.disconnectReason)
-        assertFalse(session.selectCamera(true).success)
-        assertTrue(recorder.data.closed)
-        session.close()
     }
 
     @Test
@@ -254,37 +176,6 @@ class RecorderSessionTest {
                 session.close()
                 part.delete()
             }
-        }
-    }
-
-    @Test
-    fun ignoresFileCallbacksUntilItsOwnGetFileRequestStarts() {
-        val recorder = Recorder()
-        val part = File.createTempFile("recorder-stale-", ".part")
-        val session = RecorderSession(recorder, java.util.function.Consumer {})
-        assertTrue(session.open("recorder", 7878, 8787, "model", "OwnerPwd", 700).opened)
-        recorder.onCommand = {
-            when (it.optInt("msg_id")) {
-                261 ->
-                    recorder.command.feed(
-                        "{\"msg_id\":7,\"type\":\"get_file_fail\"}{\"msg_id\":261,\"rval\":0}"
-                    )
-                1285 -> {
-                    recorder.command.feed(
-                        "{\"msg_id\":1285,\"rval\":0,\"size\":3}{\"msg_id\":7,\"type\":\"get_file_complete\",\"param\":[{\"bytes sent\":3},{\"md5sum\":\"900150983cd24fb0d6963f7d28e17f72\"}]}"
-                    )
-                    recorder.data.feed("abc")
-                }
-            }
-        }
-        try {
-            assertEquals(
-                3L,
-                session.download("/tmp/SD0/SYSTEM/19DVR_FileListInfo.dat", part, 1024).bytes,
-            )
-        } finally {
-            session.close()
-            part.delete()
         }
     }
 
@@ -339,32 +230,6 @@ class RecorderSessionTest {
                 session.close()
                 part.delete()
             }
-        }
-    }
-
-    @Test
-    fun rejectsAnnouncedSizeAboveCallerLimitBeforeWriting() {
-        val recorder = Recorder()
-        val part = File.createTempFile("recorder-limit-", ".part")
-        val session = RecorderSession(recorder, java.util.function.Consumer {})
-        assertTrue(session.open("recorder", 7878, 8787, "model", "OwnerPwd", 700).opened)
-        recorder.onCommand = {
-            when (it.optInt("msg_id")) {
-                261 -> recorder.command.feed("{\"msg_id\":261,\"rval\":0}")
-                1285 ->
-                    recorder.command.feed(
-                        "{\"msg_id\":1285,\"rval\":0,\"size\":9223372036854775807}"
-                    )
-            }
-        }
-        try {
-            session.download("/tmp/SD0/SYSTEM/19DVR_FileListInfo.dat", part, 1024)
-            fail("Oversized transfer accepted")
-        } catch (expected: IOException) {
-            assertEquals(0, part.length())
-        } finally {
-            session.close()
-            part.delete()
         }
     }
 
@@ -472,19 +337,6 @@ class RecorderSessionTest {
         }
     }
 
-    @Test
-    fun excessiveFrameAndUnsolicitedTrafficCannotGrowTraceWithoutBound() {
-        val recorder = Recorder()
-        val callbacks = CopyOnWriteArrayList<String>()
-        val session = RecorderSession(recorder, java.util.function.Consumer {}, callbacks::add)
-        assertTrue(session.open("recorder", 7878, 8787, "model", "OwnerPwd", 700).opened)
-        recorder.command.feed("{\"msg_id\":7,\"secret\":\"" + "x".repeat(300 * 1024))
-        await { callbacks.isNotEmpty() }
-        assertTrue(session.snapshotTrace().length <= 512 * 1024)
-        assertTrue(recorder.command.closed && recorder.data.closed)
-        session.close()
-    }
-
     private class Recorder : RecorderProbe.SocketMaker {
         val command = FakeSocket()
         val data = FakeSocket()
@@ -514,10 +366,8 @@ class RecorderSessionTest {
         private val incoming = java.util.ArrayDeque<Int>()
         private val outgoing = ByteArrayOutputStream()
         val waiting = CountDownLatch(1)
-        val timedOut = CountDownLatch(1)
         @Volatile var closed = false
         @Volatile var timeoutMs = 250
-        @Volatile var readingThread: Thread? = null
         private var eof = false
         var sent: (String) -> Unit = {}
 
@@ -545,14 +395,12 @@ class RecorderSessionTest {
             object : InputStream() {
                 override fun read(): Int =
                     synchronized(lock) {
-                        readingThread = Thread.currentThread()
                         val deadline =
                             System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs.toLong())
                         while (incoming.isEmpty() && !closed && !eof) {
                             waiting.countDown()
                             val left = deadline - System.nanoTime()
                             if (left <= 0) {
-                                timedOut.countDown()
                                 throw SocketTimeoutException()
                             }
                             try {

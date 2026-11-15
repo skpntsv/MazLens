@@ -11,6 +11,8 @@ captures/
 *.apks
 *.jks
 *.keystore
+*.p12
+*.pfx
 keystore.properties
 *.log
 .env

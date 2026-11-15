@@ -16,6 +16,7 @@ data class ConnectionUiState(
     val name: String = "",
     val address: String = "",
     val networkInterface: String = "",
+    val recorderId: String = "",
     val status: String = "Найдите регистратор рядом с машиной",
     val peers: List<PeerUi> = emptyList(),
 )

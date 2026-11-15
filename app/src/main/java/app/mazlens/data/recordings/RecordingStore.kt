@@ -13,6 +13,7 @@ import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.StandardCopyOption.ATOMIC_MOVE
 import java.nio.file.StandardCopyOption.REPLACE_EXISTING
+import java.security.MessageDigest
 import java.util.UUID
 
 data class SavedRecording(val entry: RecorderFile, val file: File, val savedAt: Long)
@@ -69,6 +70,7 @@ class RecordingStore(directory: File) {
     fun createPartial(entry: RecorderFile): File {
         checkRoot()
         entry.validateForStorage()
+        if (entry.recorderId.isBlank()) throw IOException("Не удалось определить регистратор")
         checkSpace(entry.size)
         val partial = child("${entry.id}.${UUID.randomUUID()}.part")
         if (!partial.createNewFile()) throw IOException("Не удалось создать временный файл записи")
@@ -99,8 +101,10 @@ class RecordingStore(directory: File) {
         requireRegular(partial)
         val length = partial.length()
         validateLength(entry, length)
-        // Completed originals are immutable. A failed/repeated download never replaces valid bytes.
         find(entry.id)?.let { previous ->
+            if (!MessageDigest.isEqual(checksum(previous.file), checksum(partial)))
+                throw IOException("Содержимое записи изменилось; прежний оригинал сохранён")
+            if (!publish {}) throw IOException("Сохранение записи отменено")
             discard(partial)
             return previous
         }
@@ -121,13 +125,14 @@ class RecordingStore(directory: File) {
             FileOutputStream(stagedMetadata).use { stream ->
                 val output = DataOutputStream(stream)
                 output.writeInt(METADATA_MAGIC)
-                output.writeInt(1)
+                output.writeInt(2)
                 output.writeUTF(entry.name)
                 output.writeInt(entry.camera)
                 output.writeInt(entry.category)
                 output.writeLong(entry.size)
                 output.writeUTF(entry.recordedAt)
                 output.writeUTF(entry.remotePath)
+                output.writeUTF(entry.recorderId)
                 output.writeLong(saved.savedAt)
                 output.writeLong(length)
                 output.flush()
@@ -184,8 +189,10 @@ class RecordingStore(directory: File) {
             if (metadata.length() !in 1..MAX_METADATA_BYTES)
                 throw IOException("Некорректное описание записи")
             DataInputStream(Files.newInputStream(metadata.toPath(), NOFOLLOW_LINKS)).use { input ->
-                if (input.readInt() != METADATA_MAGIC || input.readInt() != 1)
+                if (input.readInt() != METADATA_MAGIC)
                     throw IOException("Неизвестный формат описания записи")
+                val version = input.readInt()
+                if (version !in 1..2) throw IOException("Неизвестный формат описания записи")
                 val entry =
                     RecorderFile(
                         input.readUTF(),
@@ -194,6 +201,7 @@ class RecordingStore(directory: File) {
                         input.readLong(),
                         input.readUTF(),
                         input.readUTF(),
+                        if (version >= 2) input.readUTF() else "",
                     )
                 entry.validateForStorage()
                 val savedAt = input.readLong()
@@ -216,6 +224,19 @@ class RecordingStore(directory: File) {
         if (length !in 1..MAX_RECORDING_BYTES || (entry.size > 0 && length != entry.size)) {
             throw IOException("Размер скачанной записи не совпадает с каталогом")
         }
+    }
+
+    private fun checksum(file: File): ByteArray {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            var count = input.read(buffer)
+            while (count != -1) {
+                digest.update(buffer, 0, count)
+                count = input.read(buffer)
+            }
+        }
+        return digest.digest()
     }
 
     private fun checkSpace(bytes: Long) {

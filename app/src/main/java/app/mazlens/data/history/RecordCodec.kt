@@ -16,6 +16,7 @@ internal object RecordCodec {
             put("networkSnapshot", r.networkSnapshot)
             put("passwordCandidate", r.passwordCandidate)
             put("appVersion", r.appVersion)
+            put("timedOut", r.timedOut)
         }
 
     fun decode(o: JSONObject) =
@@ -31,5 +32,6 @@ internal object RecordCodec {
             o.optString("networkSnapshot"),
             o.optString("passwordCandidate"),
             o.optString("appVersion", "unknown"),
+            o.optBoolean("timedOut", false),
         )
 }

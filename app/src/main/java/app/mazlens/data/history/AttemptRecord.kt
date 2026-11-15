@@ -30,4 +30,5 @@ data class AttemptRecord(
     val networkSnapshot: String = "",
     val passwordCandidate: String = "",
     val appVersion: String = BuildConfig.VERSION_NAME,
+    val timedOut: Boolean = false,
 )

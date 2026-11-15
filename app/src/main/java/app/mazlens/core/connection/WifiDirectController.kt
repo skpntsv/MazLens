@@ -14,6 +14,7 @@ import android.net.wifi.p2p.WifiP2pManager
 import android.os.Build
 import android.os.Handler
 import android.os.SystemClock
+import java.util.Locale
 
 /** Wi-Fi Direct discovery and group verification; never issues recorder commands. */
 @Suppress("DEPRECATION")
@@ -23,7 +24,12 @@ class WifiDirectController(private val context: Context, private val listener: L
 
         @JvmSuppressWildcards fun peers(devices: List<WifiP2pDevice>)
 
-        fun connection(name: String, address: String?, networkInterface: String?)
+        fun connection(
+            name: String,
+            address: String?,
+            networkInterface: String?,
+            recorderId: String = "",
+        )
 
         fun diagnostic(message: String)
     }
@@ -32,7 +38,6 @@ class WifiDirectController(private val context: Context, private val listener: L
     private val manager = context.getSystemService(Context.WIFI_P2P_SERVICE) as WifiP2pManager?
     private var channel: WifiP2pManager.Channel? = null
     private var registered = false
-    private var initiatedHere = false
     private var closed = false
     private val attempts = ConnectionAttempt()
     private var cancelling = false
@@ -115,36 +120,7 @@ class WifiDirectController(private val context: Context, private val listener: L
         selectedAddress = address ?: ""
     }
 
-    fun restoreOwnership(initiated: Boolean) {
-        initiatedHere = initiated
-    }
-
-    fun initiatedHere(): Boolean = initiatedHere
-
     fun operationPending(): Boolean = attempts.pending()
-
-    fun pendingKind(): Int =
-        if (!attempts.pending()) 0 else if (disconnecting) 3 else if (cancelling) 2 else 1
-
-    fun pendingDeadline(): Long = attempts.deadline()
-
-    fun restorePending(kind: Int, deadline: Long) {
-        if (kind == 0 || !available()) return
-        listener.diagnostic(
-            "Восстановление P2P операции после пересоздания экрана: kind=$kind, deadline=$deadline"
-        )
-        if (kind == 3) {
-            disconnect()
-            return
-        }
-        val attempt = attempts.begin(deadline)
-        listener.connection("", "", "")
-        if (kind == 2) cancelTimedOutAttempt(attempt)
-        else {
-            listener.status("Предыдущее сопряжение ещё выполняется. Ожидаем результат Android…")
-            scheduleTimeout(attempt)
-        }
-    }
 
     // Below API 33 the filter contains only protected system broadcasts. The
     // newer action is added only on the branch with an explicit receiver flag.
@@ -223,7 +199,6 @@ class WifiDirectController(private val context: Context, private val listener: L
             return
         }
         selectedAddress = device.deviceAddress ?: ""
-        initiatedHere = true
         ++refreshGeneration
         listener.connection("", "", "")
         listener.diagnostic(
@@ -382,6 +357,7 @@ class WifiDirectController(private val context: Context, private val listener: L
                             if (name.isEmpty()) networkName else name,
                             address,
                             group.`interface`,
+                            owner.deviceAddress.orEmpty().lowercase(Locale.ROOT),
                         )
                     }
                 } catch (_: SecurityException) {
@@ -505,13 +481,7 @@ class WifiDirectController(private val context: Context, private val listener: L
         )
     }
 
-    fun close(releaseConnection: Boolean) {
-        if (releaseConnection && initiatedHere && manager != null && channel != null) {
-            try {
-                manager.cancelConnect(channel, null)
-                manager.removeGroup(channel, null)
-            } catch (_: SecurityException) {}
-        }
+    fun close() {
         closed = true
         stop()
         handler.removeCallbacksAndMessages(null)

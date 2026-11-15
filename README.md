@@ -20,6 +20,8 @@ A matching car model or Wi-Fi network name alone does not establish compatibilit
 
 ## Use
 
+Download the signed APK from [GitHub Releases](https://github.com/skpntsv/MazLens/releases/latest).
+
 1. Park the car and turn on the recorder. Enable its Wi-Fi function.
 2. Open **Подключение**, allow nearby-device access, find the recorder and connect.
 3. Enter the recorder password and select **Войти с паролем**. Android Wi-Fi pairing and the recorder's own login are separate steps.

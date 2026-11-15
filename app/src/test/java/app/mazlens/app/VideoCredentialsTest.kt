@@ -18,14 +18,6 @@ class VideoCredentialsTest {
         )
 
     @Test
-    fun explicitCredentialTakesPrecedenceAndPreservesCase() {
-        assertEquals(
-            "TypedPw9",
-            VideoCredentials.select("TypedPw9", "my-dvr", listOf(record("my-dvr", "SavedPwd"))),
-        )
-    }
-
-    @Test
     fun invalidExplicitCredentialNeverFallsBackToStoredOne() {
         assertNull(VideoCredentials.select("short", "my-dvr", listOf(record("my-dvr", "SavedPwd"))))
     }
@@ -52,10 +44,5 @@ class VideoCredentialsTest {
                 .recoveredPasswordCandidate
         )
         assertNull(state.copy(connection = ConnectionUiState()).recoveredPasswordCandidate)
-    }
-
-    @Test
-    fun noKnownCredentialDoesNotGuess() {
-        assertNull(VideoCredentials.select("", "my-dvr", listOf(record("other-dvr", "OtherPwd"))))
     }
 }

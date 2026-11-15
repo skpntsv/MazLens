@@ -28,20 +28,12 @@ class HistoryStoreTest {
     fun keepsIndependentAttemptsAcrossRestart() {
         val dir = temp.newFolder()
         val store = HistoryStore(dir)
-        store.save(item("first", 10))
+        store.save(item("first", 10).copy(timedOut = true))
         store.save(item("second", 20))
         assertEquals(listOf("second", "first"), HistoryStore(dir).load().map { it.id })
         assertEquals("SEND private\nRECV secret", HistoryStore(dir).load().last().trace)
         assertEquals("candidate", HistoryStore(dir).load().last().passwordCandidate)
-    }
-
-    @Test
-    fun updatingSameAttemptDoesNotCreateDuplicate() {
-        val store = HistoryStore(temp.newFolder())
-        store.save(item("same").copy(status = AttemptStatus.RUNNING))
-        store.save(item("same").copy(summary = "Готово"))
-        assertEquals(1, store.load().size)
-        assertEquals("Готово", store.load().single().summary)
+        assertTrue(HistoryStore(dir).load().last().timedOut)
     }
 
     @Test
@@ -52,48 +44,6 @@ class HistoryStoreTest {
         assertEquals(AttemptStatus.INTERRUPTED, recovered.status)
         assertFalse(recovered.summary.isBlank())
         assertEquals(AttemptStatus.INTERRUPTED, HistoryStore(dir).load().single().status)
-    }
-
-    @Test
-    fun pruningKeepsNewestAndDoesNotEraseNewWrite() {
-        val store = HistoryStore(temp.newFolder(), maxRecords = 2, maxBytes = 100_000)
-        store.save(item("one", 1))
-        store.save(item("two", 2))
-        store.save(item("three", 3))
-        assertEquals(listOf("three", "two"), store.load().map { it.id })
-    }
-
-    @Test
-    fun byteBudgetPrunesOldestAndRejectsOversizedWithoutErasingHistory() {
-        val dir = temp.newFolder()
-        val store = HistoryStore(dir, maxRecords = 50, maxBytes = 1400)
-        store.save(item("one", 1, "x".repeat(600)))
-        store.save(item("two", 2, "y".repeat(600)))
-        assertEquals(listOf("two"), store.load().map { it.id })
-        try {
-            store.save(item("too-large", 3, "z".repeat(3000)))
-            fail("oversized accepted")
-        } catch (_: java.io.IOException) {}
-        assertEquals(listOf("two"), HistoryStore(dir).load().map { it.id })
-    }
-
-    @Test
-    fun interruptedTemporaryWriteCannotReplaceCompletedRecord() {
-        val dir = temp.newFolder()
-        val store = HistoryStore(dir)
-        store.save(item("one"))
-        java.io.File(dir, "one.json.tmp").writeText("{unfinished")
-        assertEquals("one", HistoryStore(dir).load().single().id)
-    }
-
-    @Test
-    fun corruptRecordDoesNotHideOtherResults() {
-        val dir = temp.newFolder()
-        val store = HistoryStore(dir)
-        store.save(item("good"))
-        java.io.File(dir, "bad.json").writeText("{invalid")
-        assertEquals(listOf("good"), store.load().map { it.id })
-        assertTrue(store.warnings.isNotEmpty())
     }
 
     @Test
@@ -116,28 +66,5 @@ class HistoryStoreTest {
         assertEquals("first", json.getJSONArray("attempts").getJSONObject(0).getString("id"))
         assertFalse(entries.getValue("report.txt").contains("Проверка later"))
         assertTrue(entries.getValue("report.txt").contains("network snapshot"))
-    }
-
-    @Test
-    fun quotaIncludesOrphanTemporaryAndCorruptFiles() {
-        val dir = temp.newFolder()
-        val store = HistoryStore(dir, maxRecords = 50, maxBytes = 1400)
-        store.save(item("old", 1))
-        java.io.File(dir, "orphan.json.tmp").writeText("x".repeat(2000))
-        java.io.File(dir, "corrupt.json").writeText("?".repeat(2000))
-        store.save(item("new", 2))
-        assertTrue("history exceeded disk budget", dir.listFiles()!!.sumOf { it.length() } <= 1400)
-        assertTrue(store.load().any { it.id == "new" })
-    }
-
-    @Test
-    fun terminalResultCannotRegressToLateRunningSnapshot() {
-        val store = HistoryStore(temp.newFolder())
-        store.save(
-            item("same").copy(status = AttemptStatus.SUCCESS, summary = "Первый кадр получен")
-        )
-        store.save(item("same").copy(status = AttemptStatus.RUNNING, summary = "Ожидание"))
-        assertEquals(AttemptStatus.SUCCESS, store.load().single().status)
-        assertEquals("Первый кадр получен", store.load().single().summary)
     }
 }

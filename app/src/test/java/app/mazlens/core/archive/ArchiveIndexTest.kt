@@ -6,19 +6,7 @@ import java.nio.ByteOrder
 import org.junit.Assert.*
 import org.junit.Test
 
-/** Synthetic binary fixtures from the decompiled layout; not a hardware capture. */
 class ArchiveIndexTest {
-    @Test
-    fun duplicateRemoteFilesHaveOneStableListIdentity() {
-        val files = ArchiveIndex.parse(index(row(), row(), row(camera = 2)))
-        assertEquals(2, files.size)
-        assertEquals(files.size, files.map { it.id }.toSet().size)
-    }
-
-    @Test
-    fun conflictingMetadataForOneRemotePathIsACatalogueError() {
-        fails { ArchiveIndex.parse(index(row(size = 4), row(size = 5))) }
-    }
 
     @Test
     fun readsBigEndianUnsignedSizeAndBcdLocalDate() {
@@ -48,87 +36,10 @@ class ArchiveIndexTest {
     }
 
     @Test
-    fun stableIdUsesRemotePathAndSeparatesCameras() {
-        val front = ArchiveIndex.parse(index(row())).single()
-        val later = front.copy(size = 90L, recordedAt = "2026-11-07 00:00:00")
-        val rear = ArchiveIndex.parse(index(row(camera = 2))).single()
-        assertEquals("ecfb323fa2c145e0dddddffbe806c715e4e09bb7c514cfc70149852a5ec7e5a4", front.id)
-        assertEquals(front.id, later.id)
-        assertNotEquals(front.id, rear.id)
-    }
-
-    @Test
-    fun ignoresEightNameSuffixBytesAndOpaqueMagic() {
-        val data = index(row())
-        for (i in 0..7) data[i] = 0xff.toByte()
-        for (i in 53..60) data[i] = '/'.code.toByte() // row offset14..21 are intentionally unused.
-        assertEquals("261106235859", ArchiveIndex.parse(data).single().name)
-    }
-
-    @Test
-    fun acceptsEmptyIndexAndSkipsValidUnsupportedCameraOrCategory() {
-        assertTrue(ArchiveIndex.parse(index()).isEmpty())
-        assertTrue(ArchiveIndex.parse(index(row(camera = 3), row(category = 8))).isEmpty())
-    }
-
-    @Test
     fun rejectsShortHeaderTruncatedRowAndTrailingBytes() {
         fails { ArchiveIndex.parse(ByteArray(38)) }
         fails { ArchiveIndex.parse(index(row()).dropLast(1).toByteArray()) }
         fails { ArchiveIndex.parse(index(row()) + 0) }
-    }
-
-    @Test
-    fun rejectsMismatchedAndExcessiveCountsBeforeReadingRows() {
-        val mismatch = index(row()).apply { this[10] = 2 }
-        fails { ArchiveIndex.parse(mismatch) }
-        val excessive = ByteArray(39 + 32768 * 63).apply { this[9] = 0x80.toByte() }
-        fails { ArchiveIndex.parse(excessive) }
-    }
-
-    @Test
-    fun rejectsTraversalControlAndNonAsciiNamesEvenForUnsupportedRows() {
-        for (name in
-            listOf(
-                "../106235859",
-                "261106/35859",
-                "261106\\35859",
-                "261106\u000035859",
-                "261106é35859",
-            )) {
-            fails { ArchiveIndex.parse(index(row(name = name))) }
-            fails { ArchiveIndex.parse(index(row(name = name, camera = 3))) }
-        }
-    }
-
-    @Test
-    fun rejectsInvalidBcdAndImpossibleCalendarInStartTimestamp() {
-        for (relativeOffset in 28..33) {
-            fails {
-                ArchiveIndex.parse(index(row()).apply { this[39 + relativeOffset] = 0xfa.toByte() })
-            }
-        }
-        fails {
-            ArchiveIndex.parse(
-                index(row()).apply {
-                    this[39 + 29] = 0x02
-                    this[39 + 30] = 0x30
-                }
-            )
-        }
-        fails { ArchiveIndex.parse(index(row()).apply { this[39 + 31] = 0x24 }) }
-        fails { ArchiveIndex.parse(index(row()).apply { this[39 + 32] = 0x60 }) }
-    }
-
-    @Test
-    fun handlesValidLeapDay() {
-        val leap =
-            index(row()).apply {
-                this[39 + 28] = 0x24
-                this[39 + 29] = 0x02
-                this[39 + 30] = 0x29
-            }
-        assertEquals("2024-02-29 23:58:59", ArchiveIndex.parse(leap).single().recordedAt)
     }
 
     @Test

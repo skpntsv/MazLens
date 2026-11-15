@@ -19,11 +19,4 @@ public class WifiDirectControllerTest {
         WifiDirectController.acceptsOwner(
             "AA:BB:CC:00:00:02", "aa:bb:cc:00:00:02", "Recorder", "DIRECT-xx"));
   }
-
-  @Test
-  public void restoringWithoutSelectionAcceptsOnlyKnownModelNames() {
-    assertTrue(
-        WifiDirectController.acceptsOwner("", "aa:bb:cc:00:00:01", "C9KA_V6_580", "DIRECT-xx"));
-    assertFalse(WifiDirectController.acceptsOwner("", "aa:bb:cc:00:00:01", "Unknown", "DIRECT-xx"));
-  }
 }

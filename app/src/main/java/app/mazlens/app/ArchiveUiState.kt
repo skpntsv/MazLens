@@ -5,7 +5,7 @@ import app.mazlens.core.archive.RecorderFile
 import app.mazlens.data.recordings.SavedRecording
 
 data class ArchiveUiState(
-    val recorderName: String = "",
+    val recorderId: String = "",
     val files: List<RecorderFile> = emptyList(),
     val saved: List<SavedRecording> = emptyList(),
     val loadingSaved: Boolean = true,

@@ -21,6 +21,7 @@ object ProblemExplainer {
                 setOf(AttemptStatus.FAILED, AttemptStatus.REJECTED, AttemptStatus.INTERRUPTED)
         )
             return null
+        if (record.timedOut) return timeout()
         primaryCode(record.response)
             ?.takeIf { it != 0 }
             ?.let {
@@ -70,13 +71,15 @@ object ProblemExplainer {
                         "Выбор камеры не подтверждён: SocketTimeoutException.",
                         "Время ожидания RTSP истекло",
                         "Время ожидания ответа истекло",
+                        "Время ожидания ответа истекло.",
                         "Превышено время загрузки файла",
                         "Регистратор перестал передавать файл",
-                    ) ->
+                    ) -> timeout()
+            summary == "Содержимое записи изменилось; прежний оригинал сохранён" ->
                 ProblemExplanation(
-                    "Истекло время ожидания",
-                    "Ответ или данные не поступили за отведённое время. Точная причина задержки неизвестна.",
-                    "Проверьте подключение к регистратору, подождите и повторите операцию.",
+                    "Запись изменилась",
+                    "Под тем же именем и размером регистратор вернул другое содержимое.",
+                    "Прежний оригинал доступен в разделе «На телефоне». Сохраните отчёт в диагностике для разбора новой записи.",
                 )
             summary.startsWith("Connection refused", true) ||
                 summary.startsWith("No route to host", true) ||
@@ -265,6 +268,13 @@ object ProblemExplainer {
             }
         return p.copy(details = "rval=$code")
     }
+
+    private fun timeout() =
+        ProblemExplanation(
+            "Истекло время ожидания",
+            "Ответ или данные не поступили за отведённое время. Точная причина задержки неизвестна.",
+            "Проверьте подключение к регистратору, подождите и повторите операцию.",
+        )
 
     private fun unknown() =
         ProblemExplanation(

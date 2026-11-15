@@ -32,6 +32,7 @@ class RtspProbe(private val factory: RecorderProbe.SocketMaker, private val log:
         @JvmField val videoAdvertised: Boolean,
         @JvmField val authRequired: Boolean,
         @JvmField val cancelled: Boolean,
+        @JvmField val timedOut: Boolean = false,
     )
 
     private val socketLock = Any()
@@ -48,6 +49,7 @@ class RtspProbe(private val factory: RecorderProbe.SocketMaker, private val log:
         var videoAdvertised = false
         var authRequired = false
         var cancelled = false
+        var timedOut = false
         var socket: Socket? = null
         var summary = "Ответ RTSP не получен"
 
@@ -68,6 +70,7 @@ class RtspProbe(private val factory: RecorderProbe.SocketMaker, private val log:
                 videoAdvertised,
                 authRequired,
                 cancelled,
+                timedOut,
             )
 
         if (closed) {
@@ -155,6 +158,7 @@ class RtspProbe(private val factory: RecorderProbe.SocketMaker, private val log:
             summary = "Некорректный адрес или параметры RTSP"
             event("RTSP invalid target")
         } catch (_: SocketTimeoutException) {
+            timedOut = true
             summary = "Время ожидания RTSP истекло"
             event("RTSP deadline exceeded")
         } catch (_: LimitExceeded) {
@@ -177,6 +181,7 @@ class RtspProbe(private val factory: RecorderProbe.SocketMaker, private val log:
         // close() can interrupt connect/read as an ordinary SocketException.
         if (closed) {
             cancelled = true
+            timedOut = false
             descriptionReceived = false
             videoAdvertised = false
             summary = "Проверка RTSP отменена"

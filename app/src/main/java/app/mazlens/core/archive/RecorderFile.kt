@@ -14,13 +14,18 @@ data class RecorderFile(
     val size: Long,
     val recordedAt: String,
     val remotePath: String,
+    val recorderId: String = "",
 ) {
-    /** Remote path identifies the original independently of index ordering or date formatting. */
     val id: String
-        get() =
-            MessageDigest.getInstance("SHA-256")
-                .digest(remotePath.toByteArray(Charsets.UTF_8))
+        get() {
+            // Unscoped identities are kept only to read originals saved before recorder tracking.
+            val identity =
+                if (recorderId.isEmpty()) remotePath
+                else "$recorderId\u0000$remotePath\u0000$size\u0000$recordedAt"
+            return MessageDigest.getInstance("SHA-256")
+                .digest(identity.toByteArray(Charsets.UTF_8))
                 .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        }
 
     val isVideo: Boolean
         get() = category !in 6..7

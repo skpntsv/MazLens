@@ -33,6 +33,7 @@ class AccessProbe(
         @JvmField val password: String,
         @JvmField val response: String,
         @JvmField val sessionOpened: Boolean,
+        @JvmField val timedOut: Boolean = false,
     )
 
     private val sockets = ArrayList<Socket>()
@@ -89,6 +90,7 @@ class AccessProbe(
     ): Outcome {
         var token = 0
         var sessionOpened = false
+        var timedOut = false
         var rawNeeded = false
         var summary = "Проверка не завершена."
         var password = ""
@@ -167,6 +169,7 @@ class AccessProbe(
             }
         } catch (error: Exception) {
             if (error !is IOException && error !is JSONException) throw error
+            timedOut = error is SocketTimeoutException && !cancelled
             summary =
                 when {
                     cancelled -> "Проверка отменена; соединения закрыты."
@@ -206,7 +209,7 @@ class AccessProbe(
             }
             closeSockets()
         }
-        return Outcome(summary, trace.toString(), password, response, sessionOpened)
+        return Outcome(summary, trace.toString(), password, response, sessionOpened, timedOut)
     }
 
     @Throws(IOException::class)

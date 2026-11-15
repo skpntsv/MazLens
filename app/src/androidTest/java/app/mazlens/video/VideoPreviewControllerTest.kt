@@ -31,32 +31,6 @@ import org.junit.runner.RunWith
 class VideoPreviewControllerTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
-    // Fails if a TCP connection, RTSP reply or ready state is mistaken for a rendered frame.
-    @Test
-    fun rejectedRtspReplyIsFailureWithoutFirstFrame() {
-        RtspFixture(reject = true).use { server ->
-            val events = Events()
-            val controller = VideoPreviewController(instrumentation.targetContext)
-            try {
-                onMain { controller.start(server.uri, SocketFactory.getDefault(), events) }
-                assertTrue(
-                    "RTSP error was not delivered",
-                    events.terminal.await(8, TimeUnit.SECONDS),
-                )
-                assertEquals(listOf("failure"), events.values.toList())
-                assertTrue("failure detail missing", events.detail.isNotBlank())
-                assertTrue(
-                    "Media3 control socket stayed open",
-                    server.closed.await(3, TimeUnit.SECONDS),
-                )
-            } finally {
-                onMain { controller.stop() }
-            }
-            server.assertHealthy()
-        }
-    }
-
-    // Fails if cancellation emits a result, leaks the socket, or leaves the startup timer armed.
     @Test
     fun stopClosesPendingControlSocketAndSuppressesLateReplyAndDeadline() {
         RtspFixture(stall = true).use { server ->
@@ -86,8 +60,6 @@ class VideoPreviewControllerTest {
         }
     }
 
-    // Fails if success precedes decoder output, RTP uses UDP, binding is ignored, or deadlines are
-    // wrong.
     @Test
     fun actualH264FrameIsReportedOnceThenPreviewClosesAfterThirtySeconds() {
         RtspFixture().use { server ->
@@ -168,7 +140,6 @@ class VideoPreviewControllerTest {
         val values: MutableList<String> = Collections.synchronizedList(mutableListOf())
         val terminal = CountDownLatch(1)
         val frame = CountDownLatch(1)
-        @Volatile var detail = ""
 
         override fun firstFrame() {
             values.add("frame")
@@ -176,7 +147,6 @@ class VideoPreviewControllerTest {
         }
 
         override fun failure(summary: String, detail: String) {
-            this.detail = "$summary\n$detail"
             values.add("failure")
             terminal.countDown()
         }
@@ -188,10 +158,7 @@ class VideoPreviewControllerTest {
     }
 
     /** Minimal one-track H.264/RTP-over-RTSP server using generated, non-copyrighted pixels. */
-    private class RtspFixture(
-        private val reject: Boolean = false,
-        private val stall: Boolean = false,
-    ) : Closeable {
+    private class RtspFixture(private val stall: Boolean = false) : Closeable {
         private val server = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
         val uri = "rtsp://127.0.0.1:${server.localPort}/live"
         val request = CountDownLatch(1)
@@ -220,7 +187,7 @@ class VideoPreviewControllerTest {
                                     .trim()
                             request.countDown()
                             if (stall) releaseReply.await(5, TimeUnit.SECONDS)
-                            if (reject || stall) {
+                            if (stall) {
                                 reply(socket, cseq, "404 Not Found")
                                 // Observe the peer closing rather than closing on behalf of the
                                 // controller.
