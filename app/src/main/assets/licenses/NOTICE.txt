@@ -1,0 +1,31 @@
+MazLens 0.1.1
+Copyright (c) 2026 MazLens contributors
+MazLens is licensed under MIT; see MazLens-MIT.txt in the APK.
+
+This application includes the following open-source components under the
+Apache License, Version 2.0. See Apache-2.0.txt in the APK.
+
+Kotlin standard library and JetBrains annotations
+JetBrains s.r.o. and respective authors and developers
+https://github.com/JetBrains/kotlin
+https://github.com/JetBrains/java-annotations
+
+kotlinx.coroutines and kotlinx.serialization
+JetBrains s.r.o. and Kotlin contributors
+https://github.com/Kotlin/kotlinx.coroutines
+https://github.com/Kotlin/kotlinx.serialization
+
+AndroidX, Jetpack Compose and Media3
+The Android Open Source Project and respective contributors
+https://android.googlesource.com/platform/frameworks/support/
+https://github.com/androidx/media
+
+Guava and failureaccess
+The Guava Authors
+https://github.com/google/guava
+
+JSpecify annotations
+The JSpecify Authors
+https://github.com/jspecify/jspecify
+
+Other upstream notices included by the dependencies are retained in META-INF.

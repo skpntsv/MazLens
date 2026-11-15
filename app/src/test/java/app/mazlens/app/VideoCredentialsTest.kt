@@ -1,0 +1,61 @@
+package app.mazlens.app
+
+import app.mazlens.data.history.*
+import org.junit.Assert.*
+import org.junit.Test
+
+class VideoCredentialsTest {
+    private fun record(name: String, pw: String, status: AttemptStatus = AttemptStatus.SUCCESS) =
+        AttemptRecord(
+            "id",
+            1,
+            AttemptKind.ACCESS,
+            "title",
+            "summary",
+            status,
+            networkSnapshot = "Регистратор: $name\n",
+            passwordCandidate = pw,
+        )
+
+    @Test
+    fun explicitCredentialTakesPrecedenceAndPreservesCase() {
+        assertEquals(
+            "TypedPw9",
+            VideoCredentials.select("TypedPw9", "my-dvr", listOf(record("my-dvr", "SavedPwd"))),
+        )
+    }
+
+    @Test
+    fun invalidExplicitCredentialNeverFallsBackToStoredOne() {
+        assertNull(VideoCredentials.select("short", "my-dvr", listOf(record("my-dvr", "SavedPwd"))))
+    }
+
+    @Test
+    fun recoveryRequiresSameRecorderSuccessfulReplyAndUnmaskedValue() {
+        val old =
+            listOf(
+                record("other-dvr", "OtherPwd"),
+                record("my-dvr", "********"),
+                record("my-dvr", "DeniedPw", AttemptStatus.REJECTED),
+                record("my-dvr", "Camera77"),
+            )
+        assertEquals("Camera77", VideoCredentials.select("", "my-dvr", old))
+        val state =
+            MazLensUiState(
+                connection = ConnectionUiState(connected = true, name = "my-dvr"),
+                history = old,
+            )
+        assertEquals("Camera77", state.recoveredPasswordCandidate)
+        assertNull(
+            state
+                .copy(connection = ConnectionUiState(connected = true, name = "new-dvr"))
+                .recoveredPasswordCandidate
+        )
+        assertNull(state.copy(connection = ConnectionUiState()).recoveredPasswordCandidate)
+    }
+
+    @Test
+    fun noKnownCredentialDoesNotGuess() {
+        assertNull(VideoCredentials.select("", "my-dvr", listOf(record("other-dvr", "OtherPwd"))))
+    }
+}
