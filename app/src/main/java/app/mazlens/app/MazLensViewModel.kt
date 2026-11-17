@@ -299,6 +299,8 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
             cancelActive("Соединение с регистратором изменилось")
         }
         _state.update {
+            val password =
+                VideoCredentials.retainEntered(it.passwordInput, it.passwordRecorderId, recorderId)
             it.copy(
                 connection =
                     it.connection.copy(
@@ -331,6 +333,8 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
                         )
                     else it.archive,
                 passwordCheck = if (changed) null else it.passwordCheck,
+                passwordInput = password,
+                passwordRecorderId = if (password.isEmpty()) "" else it.passwordRecorderId,
             )
         }
     }
@@ -363,7 +367,15 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
 
     fun setPasswordInput(value: String) {
         if (!gate.active())
-            _state.update { it.copy(passwordInput = value.take(128), passwordCheck = null) }
+            _state.update {
+                it.copy(
+                    passwordInput = value.take(128),
+                    passwordRecorderId =
+                        if (value.isNotEmpty() && it.connection.connected) it.connection.recorderId
+                        else "",
+                    passwordCheck = null,
+                )
+            }
     }
 
     fun useRecoveredPassword() {

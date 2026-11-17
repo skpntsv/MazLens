@@ -5,6 +5,33 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class VideoCredentialsTest {
+    @Test
+    fun enteredPasswordSurvivesDisconnectionOnlyForItsOwner() {
+        val disconnected = VideoCredentials.retainEntered("Camera77", "recorder-a", "")
+        assertEquals("Camera77", disconnected)
+        assertEquals(
+            "Camera77",
+            VideoCredentials.retainEntered(disconnected, "recorder-a", "recorder-a"),
+        )
+        assertEquals("", VideoCredentials.retainEntered(disconnected, "recorder-a", "recorder-b"))
+    }
+
+    @Test
+    fun enteredPasswordCannotFollowAnotherRecorderWithTheSameName() {
+        val first = ConnectionUiState(name = "Mazda", recorderId = "recorder-a")
+        val second = first.copy(recorderId = "recorder-b")
+        assertEquals(
+            "",
+            VideoCredentials.retainEntered("Camera77", first.recorderId, second.recorderId),
+        )
+    }
+
+    @Test
+    fun offlineInputCannotBecomeAnotherRecordersPassword() {
+        assertEquals("Camera77", VideoCredentials.retainEntered("Camera77", "", ""))
+        assertEquals("", VideoCredentials.retainEntered("Camera77", "", "recorder-a"))
+    }
+
     private fun record(name: String, pw: String, status: AttemptStatus = AttemptStatus.SUCCESS) =
         AttemptRecord(
             "id",

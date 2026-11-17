@@ -50,6 +50,7 @@ data class MazLensUiState(
     val videoCameraRear: Boolean = false,
     val archive: ArchiveUiState = ArchiveUiState(),
     val passwordCheck: AttemptRecord? = null,
+    val passwordRecorderId: String = "",
 ) {
     val passwordValid: Boolean
         get() = passwordInput.length in 8..31
