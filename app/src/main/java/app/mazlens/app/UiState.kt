@@ -57,6 +57,7 @@ data class MazLensUiState(
 
     val recoveredPasswordCandidate: String?
         get() =
-            if (connection.connected) VideoCredentials.select("", connection.recorderId, history)
+            if (connection.connected)
+                VideoCredentials.select("", "", connection.recorderId, history)
             else null
 }

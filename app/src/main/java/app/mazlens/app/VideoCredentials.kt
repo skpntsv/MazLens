@@ -7,8 +7,16 @@ object VideoCredentials {
     fun retainEntered(entered: String, ownerId: String, recorderId: String): String =
         if (recorderId.isBlank() || recorderId == ownerId) entered else ""
 
-    fun select(entered: String, recorderId: String, history: List<AttemptRecord>): String? {
-        if (entered.isNotEmpty()) return entered.takeIf { it.length in 8..31 }
+    fun enteredForRecorder(entered: String, ownerId: String, recorderId: String): String? =
+        entered.takeIf { recorderId.isNotBlank() && recorderId == ownerId && it.length in 8..31 }
+
+    fun select(
+        entered: String,
+        ownerId: String,
+        recorderId: String,
+        history: List<AttemptRecord>,
+    ): String? {
+        if (entered.isNotEmpty()) return enteredForRecorder(entered, ownerId, recorderId)
         if (recorderId.isBlank()) return null
         return history
             .asSequence()

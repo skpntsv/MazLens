@@ -388,7 +388,17 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
             message("Введите пароль длиной от 8 до 31 символа")
             return
         }
-        runOperation(AttemptKind.ACCESS, "Вход с паролем", state.passwordInput)
+        val password =
+            VideoCredentials.enteredForRecorder(
+                state.passwordInput,
+                state.passwordRecorderId,
+                state.connection.recorderId,
+            )
+        if (password == null) {
+            message("Не удалось подтвердить регистратор. Подключитесь заново и введите пароль.")
+            return
+        }
+        runOperation(AttemptKind.ACCESS, "Вход с паролем", password)
     }
 
     fun runAccess() =
@@ -407,7 +417,12 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
     fun runVideo() {
         val state = _state.value
         val password =
-            VideoCredentials.select(state.passwordInput, state.connection.recorderId, state.history)
+            VideoCredentials.select(
+                state.passwordInput,
+                state.passwordRecorderId,
+                state.connection.recorderId,
+                state.history,
+            )
         if (password == null) {
             _state.update {
                 it.copy(
@@ -563,7 +578,12 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
         }
         if (entry != null && entry.recorderId != state.connection.recorderId) return
         val password =
-            VideoCredentials.select(state.passwordInput, state.connection.recorderId, state.history)
+            VideoCredentials.select(
+                state.passwordInput,
+                state.passwordRecorderId,
+                state.connection.recorderId,
+                state.history,
+            )
         if (password == null) {
             _state.update {
                 it.copy(

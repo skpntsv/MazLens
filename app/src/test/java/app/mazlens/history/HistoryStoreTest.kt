@@ -64,7 +64,7 @@ class HistoryStoreTest {
         assertEquals("", legacy.recorderId)
         assertEquals("Camera77", legacy.passwordCandidate)
         assertTrue(ReportExporter.recordText(legacy).contains("Camera77"))
-        assertNull(VideoCredentials.select("", "my-dvr", listOf(legacy)))
+        assertNull(VideoCredentials.select("", "", "my-dvr", listOf(legacy)))
     }
 
     @Test
