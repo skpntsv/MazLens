@@ -407,7 +407,7 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
     fun runVideo() {
         val state = _state.value
         val password =
-            VideoCredentials.select(state.passwordInput, state.connection.name, state.history)
+            VideoCredentials.select(state.passwordInput, state.connection.recorderId, state.history)
         if (password == null) {
             _state.update {
                 it.copy(
@@ -563,7 +563,7 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
         }
         if (entry != null && entry.recorderId != state.connection.recorderId) return
         val password =
-            VideoCredentials.select(state.passwordInput, state.connection.name, state.history)
+            VideoCredentials.select(state.passwordInput, state.connection.recorderId, state.history)
         if (password == null) {
             _state.update {
                 it.copy(
@@ -616,6 +616,7 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
                     title,
                     "Проверка выполняется",
                     AttemptStatus.RUNNING,
+                    recorderId = state.connection.recorderId,
                 ),
                 state.connection,
             )

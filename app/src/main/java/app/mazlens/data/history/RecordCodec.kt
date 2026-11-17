@@ -17,6 +17,7 @@ internal object RecordCodec {
             put("passwordCandidate", r.passwordCandidate)
             put("appVersion", r.appVersion)
             put("timedOut", r.timedOut)
+            put("recorderId", r.recorderId)
         }
 
     fun decode(o: JSONObject) =
@@ -33,5 +34,6 @@ internal object RecordCodec {
             o.optString("passwordCandidate"),
             o.optString("appVersion", "unknown"),
             o.optBoolean("timedOut", false),
+            o.optString("recorderId"),
         )
 }

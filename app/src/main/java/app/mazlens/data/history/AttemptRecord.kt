@@ -31,4 +31,5 @@ data class AttemptRecord(
     val passwordCandidate: String = "",
     val appVersion: String = BuildConfig.VERSION_NAME,
     val timedOut: Boolean = false,
+    val recorderId: String = "",
 )

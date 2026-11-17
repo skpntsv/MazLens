@@ -1,6 +1,8 @@
 package app.mazlens.history
 
+import app.mazlens.app.VideoCredentials
 import app.mazlens.data.history.*
+import java.io.File
 import java.util.zip.ZipInputStream
 import org.junit.Assert.*
 import org.junit.Rule
@@ -28,12 +30,41 @@ class HistoryStoreTest {
     fun keepsIndependentAttemptsAcrossRestart() {
         val dir = temp.newFolder()
         val store = HistoryStore(dir)
-        store.save(item("first", 10).copy(timedOut = true))
+        store.save(item("first", 10).copy(timedOut = true, recorderId = "recorder-a"))
         store.save(item("second", 20))
         assertEquals(listOf("second", "first"), HistoryStore(dir).load().map { it.id })
         assertEquals("SEND private\nRECV secret", HistoryStore(dir).load().last().trace)
         assertEquals("candidate", HistoryStore(dir).load().last().passwordCandidate)
         assertTrue(HistoryStore(dir).load().last().timedOut)
+        assertEquals("recorder-a", HistoryStore(dir).load().last().recorderId)
+    }
+
+    @Test
+    fun legacyHistoryRemainsReadableButCannotRecoverAPassword() {
+        val dir = temp.newFolder()
+        File(dir, "legacy.json")
+            .writeText(
+                """
+                {
+                  "id": "legacy",
+                  "timestamp": 1,
+                  "kind": "ACCESS",
+                  "title": "Legacy",
+                  "summary": "Success",
+                  "status": "SUCCESS",
+                  "networkSnapshot": "Регистратор: my-dvr\n",
+                  "passwordCandidate": "Camera77"
+                }
+                """
+                    .trimIndent()
+            )
+        val store = HistoryStore(dir)
+        val legacy = store.load().single()
+        assertTrue(store.warnings.isEmpty())
+        assertEquals("", legacy.recorderId)
+        assertEquals("Camera77", legacy.passwordCandidate)
+        assertTrue(ReportExporter.recordText(legacy).contains("Camera77"))
+        assertNull(VideoCredentials.select("", "my-dvr", listOf(legacy)))
     }
 
     @Test
@@ -49,7 +80,7 @@ class HistoryStoreTest {
     @Test
     fun zipExportIsCapturedSnapshotWithReadableAndStructuredReports() {
         val store = HistoryStore(temp.newFolder())
-        store.save(item("first"))
+        store.save(item("first").copy(recorderId = "recorder-a"))
         val bytes = ReportExporter.capture(store.load(), "events", 123)
         store.save(item("later"))
         val entries = mutableMapOf<String, String>()
@@ -64,6 +95,10 @@ class HistoryStoreTest {
         val json = org.json.JSONObject(entries.getValue("report.json"))
         assertEquals(1, json.getJSONArray("attempts").length())
         assertEquals("first", json.getJSONArray("attempts").getJSONObject(0).getString("id"))
+        assertEquals(
+            "recorder-a",
+            json.getJSONArray("attempts").getJSONObject(0).getString("recorderId"),
+        )
         assertFalse(entries.getValue("report.txt").contains("Проверка later"))
         assertTrue(entries.getValue("report.txt").contains("network snapshot"))
     }

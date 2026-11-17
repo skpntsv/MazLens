@@ -8,7 +8,7 @@ The app stores these items in Android's private app directory:
 - The selected recorder and connection preferences.
 - A bounded diagnostic history, including raw replies. A reply may include the recorder password or session token.
 
-The entered password remains in memory. A password returned by the recorder can be present in saved diagnostic history and reused for that recorder. This storage relies on Android's app isolation and device protection; it is not a separate encrypted vault.
+The entered password remains in memory, bound to the connected recorder's Wi-Fi Direct identifier. It survives disconnection and reconnection to the same recorder, but is cleared when a different recorder connects. A password returned by the recorder can be present in saved diagnostic history and reused only for the same recorder identifier, not its display name. Older history without an identifier remains readable and exportable but is not used for automatic password recovery. This storage relies on Android's app isolation and device protection; it is not a separate encrypted vault.
 
 Cloud backup and device-transfer backup are disabled. Uninstalling MazLens removes its private data. Use Android sharing to retain a recording outside the app first.
 

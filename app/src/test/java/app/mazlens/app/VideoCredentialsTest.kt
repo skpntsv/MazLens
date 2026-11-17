@@ -32,7 +32,12 @@ class VideoCredentialsTest {
         assertEquals("", VideoCredentials.retainEntered("Camera77", "", "recorder-a"))
     }
 
-    private fun record(name: String, pw: String, status: AttemptStatus = AttemptStatus.SUCCESS) =
+    private fun record(
+        recorderId: String,
+        pw: String,
+        status: AttemptStatus = AttemptStatus.SUCCESS,
+        name: String = "Mazda",
+    ) =
         AttemptRecord(
             "id",
             1,
@@ -42,6 +47,7 @@ class VideoCredentialsTest {
             status,
             networkSnapshot = "Регистратор: $name\n",
             passwordCandidate = pw,
+            recorderId = recorderId,
         )
 
     @Test
@@ -61,15 +67,33 @@ class VideoCredentialsTest {
         assertEquals("Camera77", VideoCredentials.select("", "my-dvr", old))
         val state =
             MazLensUiState(
-                connection = ConnectionUiState(connected = true, name = "my-dvr"),
+                connection =
+                    ConnectionUiState(connected = true, name = "Mazda", recorderId = "my-dvr"),
                 history = old,
             )
         assertEquals("Camera77", state.recoveredPasswordCandidate)
         assertNull(
             state
-                .copy(connection = ConnectionUiState(connected = true, name = "new-dvr"))
+                .copy(
+                    connection =
+                        ConnectionUiState(connected = true, name = "Mazda", recorderId = "new-dvr")
+                )
                 .recoveredPasswordCandidate
         )
+        assertEquals(
+            "Camera77",
+            state
+                .copy(connection = state.connection.copy(name = "Renamed"))
+                .recoveredPasswordCandidate,
+        )
         assertNull(state.copy(connection = ConnectionUiState()).recoveredPasswordCandidate)
+    }
+
+    @Test
+    fun unscopedHistoryCannotProvideCredentialsEvenWithAMatchingName() {
+        val legacy = listOf(record("", "Camera77", name = "my-dvr"))
+        assertNull(VideoCredentials.select("", "my-dvr", legacy))
+        assertNull(VideoCredentials.select("", "", legacy))
+        assertNull(VideoCredentials.select("", " ", legacy))
     }
 }
