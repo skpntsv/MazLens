@@ -1,5 +1,9 @@
 package app.mazlens.ui
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -25,6 +29,11 @@ class ArchiveScreenTest {
     fun archiveDownloadUsesSelectedEntryAndNeverStartsOnOpeningTab() {
         val entry = recording(2).copy(recorderId = "recorder-b")
         var requested: String? = null
+        var saved by
+            mutableStateOf(
+                listOf(SavedRecording(entry.copy(recorderId = "recorder-a"), File("unused.mp4"), 1))
+            )
+        var played: String? = null
         compose.setContent {
             MazLensApp(
                 MazLensUiState(
@@ -34,18 +43,17 @@ class ArchiveScreenTest {
                         ArchiveUiState(
                             recorderId = "recorder-b",
                             files = listOf(entry),
-                            saved =
-                                listOf(
-                                    SavedRecording(
-                                        entry.copy(recorderId = "recorder-a"),
-                                        File("unused.mp4"),
-                                        1,
-                                    )
-                                ),
+                            saved = saved,
                             loadingSaved = false,
                         ),
                 ),
-                MazLensActions(onDownload = { requested = it }),
+                MazLensActions(
+                    onDownload = {
+                        requested = it
+                        saved = saved + SavedRecording(entry, File("downloaded.mp4"), 2)
+                    },
+                    onPlaySaved = { played = it },
+                ),
             )
         }
         compose.onNodeWithTag("tab_archive").performClick()
@@ -55,6 +63,11 @@ class ArchiveScreenTest {
             .performScrollToNode(hasTestTag("download_${entry.id}"))
         compose.onNodeWithTag("download_${entry.id}").performClick()
         compose.runOnIdle { assertEquals(entry.id, requested) }
+        compose.onNodeWithTag("download_${entry.id}").assertDoesNotExist()
+        compose.onNodeWithTag("archive_screen").performScrollToNode(hasTestTag("play_${entry.id}"))
+        compose.onNodeWithTag("share_${entry.id}").assertIsDisplayed()
+        compose.onNodeWithTag("play_${entry.id}").performClick()
+        compose.runOnIdle { assertEquals(entry.id, played) }
     }
 
     private fun recording(camera: Int) =

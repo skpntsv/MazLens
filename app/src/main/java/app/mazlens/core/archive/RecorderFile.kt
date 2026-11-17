@@ -16,16 +16,15 @@ data class RecorderFile(
     val remotePath: String,
     val recorderId: String = "",
 ) {
-    val id: String
-        get() {
-            // Unscoped identities are kept only to read originals saved before recorder tracking.
-            val identity =
-                if (recorderId.isEmpty()) remotePath
-                else "$recorderId\u0000$remotePath\u0000$size\u0000$recordedAt"
-            return MessageDigest.getInstance("SHA-256")
-                .digest(identity.toByteArray(Charsets.UTF_8))
-                .joinToString("") { "%02x".format(it.toInt() and 0xff) }
-        }
+    val id: String = run {
+        // Unscoped identities are kept only to read originals saved before recorder tracking.
+        val identity =
+            if (recorderId.isEmpty()) remotePath
+            else "$recorderId\u0000$remotePath\u0000$size\u0000$recordedAt"
+        MessageDigest.getInstance("SHA-256")
+            .digest(identity.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    }
 
     val isVideo: Boolean
         get() = category !in 6..7

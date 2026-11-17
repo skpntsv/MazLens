@@ -35,6 +35,7 @@ class RecordingStoreTest {
 
     @Test
     fun commitPersistsOriginalAndMetadataAcrossStoreRecreation() {
+        assertEquals("e8456fdbe4b4af30df8dd6988c6f0c13b1a2532b5c98d949f69b0095e6634c3d", entry.id)
         val directory = temp.newFolder()
         val store = RecordingStore(directory)
         val partial = store.createPartial(entry).apply { writeBytes(byteArrayOf(1, 2, 3, 4)) }
@@ -63,6 +64,7 @@ class RecordingStoreTest {
             restored.find(otherRecorder.id)!!.file.readBytes(),
         )
         assertNotEquals(entry.id, entry.copy(size = 8).id)
+        assertNotEquals(entry.id, entry.copy(recordedAt = "2026-11-06 23:59:00").id)
     }
 
     @Test
@@ -99,8 +101,9 @@ class RecordingStoreTest {
     fun readsLegacyOriginalWithoutAssociatingItWithARecorder() {
         val directory = temp.newFolder()
         val legacy = entry.copy(recorderId = "")
-        File(directory, "${legacy.id}.MP4").writeBytes(byteArrayOf(1, 2, 3, 4))
-        DataOutputStream(File(directory, "${legacy.id}.meta").outputStream()).use { output ->
+        val legacyId = "ecfb323fa2c145e0dddddffbe806c715e4e09bb7c514cfc70149852a5ec7e5a4"
+        File(directory, "$legacyId.MP4").writeBytes(byteArrayOf(1, 2, 3, 4))
+        DataOutputStream(File(directory, "$legacyId.meta").outputStream()).use { output ->
             output.writeInt(0x44565231)
             output.writeInt(1)
             output.writeUTF(legacy.name)
@@ -114,6 +117,7 @@ class RecordingStoreTest {
         }
         val store = RecordingStore(directory)
         val saved = store.load().single()
+        assertEquals(legacyId, saved.entry.id)
         assertEquals("", saved.entry.recorderId)
         assertArrayEquals(byteArrayOf(1, 2, 3, 4), saved.file.readBytes())
         assertNull(store.find(entry.id))

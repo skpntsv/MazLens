@@ -16,6 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -33,6 +34,7 @@ fun ArchiveScreen(state: MazLensUiState, actions: MazLensActions) {
     var source by rememberSaveable { mutableIntStateOf(0) }
     var camera by rememberSaveable { mutableIntStateOf(0) }
     val archive = state.archive
+    val savedIds = remember(archive.saved) { archive.saved.mapTo(hashSetOf()) { it.entry.id } }
     val remoteEnabled =
         state.connection.connected &&
             !state.connection.connecting &&
@@ -132,7 +134,7 @@ fun ArchiveScreen(state: MazLensUiState, actions: MazLensActions) {
             }
         }
         items(visible, key = { it.id }) { entry ->
-            val saved = archive.saved.any { it.entry.id == entry.id }
+            val saved = entry.id in savedIds
             FeatureCard {
                 Text(entry.recordedAt, style = MaterialTheme.typography.titleMedium)
                 Text(
