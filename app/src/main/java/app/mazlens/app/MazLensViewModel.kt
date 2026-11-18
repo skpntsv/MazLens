@@ -27,6 +27,8 @@ import app.mazlens.core.protocol.AccessProbe
 import app.mazlens.core.protocol.RecorderErrors
 import app.mazlens.core.protocol.RecorderProbe
 import app.mazlens.core.protocol.RecorderSession
+import app.mazlens.core.protocol.RecorderSetting
+import app.mazlens.core.protocol.RecorderSettings
 import app.mazlens.data.history.AttemptKind
 import app.mazlens.data.history.AttemptRecord
 import app.mazlens.data.history.AttemptStatus
@@ -111,6 +113,9 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
         var archiveEntry: RecorderFile? = null
         var cameraRear = false
         var checkingPassword = false
+        var settingsUpdate: SettingsUpdate? = null
+        var settingsResult: RecorderSettings? = null
+        var newPassword: String? = null
         @Volatile var disconnectReason: String? = null
         var playerStarted = false
         var switchingCamera = false
@@ -120,6 +125,8 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
     }
 
     private data class WorkResult(val record: AttemptRecord, val rtsp: RtspProbe.Outcome? = null)
+
+    private data class SettingsUpdate(val expected: RecorderSettings, val desired: RecorderSettings)
 
     init {
         wifi.restoreSelection(preferences.getString("selectedRecorderAddress", "").orEmpty())
@@ -183,6 +190,7 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
 
     fun onBackground() {
         foreground = false
+        _state.update { it.backgrounded() }
         stopSaved()
         cancelActive("Приложение свёрнуто")
         wifi.stop()
@@ -333,6 +341,9 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
                         )
                     else it.archive,
                 passwordCheck = if (changed) null else it.passwordCheck,
+                settings = if (changed) SettingsUiState() else it.settings,
+                recorderActionEpoch =
+                    if (changed) it.recorderActionEpoch + 1 else it.recorderActionEpoch,
                 passwordInput = password,
                 passwordRecorderId = if (password.isEmpty()) "" else it.passwordRecorderId,
             )
@@ -563,6 +574,114 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
 
     fun refreshArchive() = runArchive(null)
 
+    fun readRecorderSettings() = runSettings(null)
+
+    fun editRecorderSetting(setting: RecorderSetting, value: Int) {
+        val state = _state.value
+        if (state.busy || state.settings.recorderId != state.connection.recorderId) return
+        val draft = state.settings.draft ?: return
+        _state.update {
+            it.copy(settings = it.settings.copy(draft = draft.with(setting, value), problem = null))
+        }
+    }
+
+    fun defaultRecorderSettings() {
+        val state = _state.value
+        if (state.busy || state.settings.recorderId != state.connection.recorderId) return
+        val draft = state.settings.draft ?: return
+        _state.update {
+            it.copy(
+                settings =
+                    it.settings.copy(
+                        draft = draft.withDefaults(),
+                        message =
+                            "Стандартные значения в форме. Для сохранения нажмите «Применить».",
+                        problem = null,
+                    )
+            )
+        }
+    }
+
+    fun applyRecorderSettings() {
+        val state = _state.value
+        val expected = state.settings.baseline ?: return
+        val desired = state.settings.draft ?: return
+        if (!state.settings.changed || state.settings.recorderId != state.connection.recorderId)
+            return
+        runSettings(SettingsUpdate(expected, desired))
+    }
+
+    fun changeRecorderPassword(old: String, new: String) {
+        val state = _state.value
+        val expected = state.settings.baseline ?: return
+        if (
+            state.settings.recorderId != state.connection.recorderId ||
+                !expected.hasPassword(old) ||
+                new.length !in 8..31 ||
+                new == old ||
+                new.matches(Regex("[*•●]+"))
+        ) {
+            message("Проверьте текущий и новый пароль.")
+            return
+        }
+        runSettings(SettingsUpdate(expected, expected.withPassword(new)), old, new)
+    }
+
+    private fun runSettings(
+        update: SettingsUpdate?,
+        oldPassword: String? = null,
+        newPassword: String? = null,
+    ) {
+        val state = _state.value
+        if (state.connection.recorderId.isBlank()) return
+        val password =
+            oldPassword
+                ?: VideoCredentials.select(
+                    state.passwordInput,
+                    state.passwordRecorderId,
+                    state.connection.recorderId,
+                    state.history,
+                )
+        if (password == null) {
+            message("Укажите пароль регистратора в разделе «Подключение».")
+            return
+        }
+        stopSaved()
+        runOperation(
+            if (newPassword != null) AttemptKind.PASSWORD_CHANGE else AttemptKind.SETTINGS,
+            if (newPassword != null) "Смена пароля регистратора"
+            else if (update != null) "Сохранение настроек" else "Чтение настроек",
+            password,
+            settingsUpdate = update,
+            newPassword = newPassword,
+        )
+    }
+
+    fun deleteRecorderRecording(id: String, actionEpoch: Long) {
+        val state = _state.value
+        if (
+            actionEpoch != state.recorderActionEpoch ||
+                state.connection.recorderId.isBlank() ||
+                state.archive.recorderId != state.connection.recorderId
+        )
+            return
+        val entry = state.archive.files.firstOrNull { it.id == id } ?: return
+        if (entry.recorderId != state.connection.recorderId) return
+        val password =
+            VideoCredentials.select(
+                state.passwordInput,
+                state.passwordRecorderId,
+                state.connection.recorderId,
+                state.history,
+            )
+        if (password == null) {
+            message("Укажите пароль регистратора в разделе «Подключение».")
+            return
+        }
+        stopSaved()
+        runOperation(AttemptKind.DELETE, "Удаление записи с регистратора", password, entry)
+    }
+
     fun downloadRecording(id: String) {
         val state = _state.value
         if (state.archive.recorderId != state.connection.recorderId) return
@@ -614,6 +733,8 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
         title: String,
         password: String? = null,
         entry: RecorderFile? = null,
+        settingsUpdate: SettingsUpdate? = null,
+        newPassword: String? = null,
     ) {
         val state = _state.value
         if (
@@ -641,6 +762,8 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
                 state.connection,
             )
         op.archiveEntry = entry
+        op.settingsUpdate = settingsUpdate
+        op.newPassword = newPassword
         op.cameraRear = state.videoCameraRear
         op.checkingPassword = kind == AttemptKind.ACCESS && password != null
         val mode =
@@ -653,6 +776,13 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
                 operationKind = kind,
                 operationLabel = title,
                 passwordCheck = if (op.checkingPassword) null else it.passwordCheck,
+                passwordInput = if (kind == AttemptKind.PASSWORD_CHANGE) "" else it.passwordInput,
+                passwordRecorderId =
+                    if (kind == AttemptKind.PASSWORD_CHANGE) "" else it.passwordRecorderId,
+                settings =
+                    if (kind == AttemptKind.SETTINGS || kind == AttemptKind.PASSWORD_CHANGE)
+                        it.settings.copy(message = title, problem = null)
+                    else it.settings,
                 video =
                     if (kind == AttemptKind.VIDEO)
                         VideoUiState(
@@ -661,10 +791,10 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
                         )
                     else it.video,
                 archive =
-                    if (kind == AttemptKind.ARCHIVE)
+                    if (kind == AttemptKind.ARCHIVE || kind == AttemptKind.DELETE)
                         it.archive.copy(
-                            loading = entry == null,
-                            downloadingId = entry?.id,
+                            loading = entry == null || kind == AttemptKind.DELETE,
+                            downloadingId = if (kind == AttemptKind.ARCHIVE) entry?.id else null,
                             receivedBytes = 0,
                             totalBytes = entry?.size ?: 0,
                             message = title,
@@ -736,6 +866,31 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
                     openRecorderSession(op, route, requireNotNull(password))?.let {
                         readArchive(op, it)
                     }
+                AttemptKind.SETTINGS,
+                AttemptKind.PASSWORD_CHANGE ->
+                    openRecorderSession(op, route, requireNotNull(password))?.let { session ->
+                        val update = op.settingsUpdate
+                        val result =
+                            if (update == null) session.readSettings()
+                            else session.updateSettings(update.expected, update.desired)
+                        if (!gate.canContinue(op.ticket, connectionEpoch))
+                            throw java.io.IOException("Чтение настроек отменено")
+                        op.settingsResult = result
+                        op.record =
+                            op.record.copy(
+                                summary =
+                                    if (op.newPassword != null)
+                                        "Новый пароль подтверждён повторным чтением."
+                                    else if (update != null) "Настройки сохранены и проверены."
+                                    else "Настройки прочитаны.",
+                                status = AttemptStatus.SUCCESS,
+                                passwordCandidate = op.newPassword.orEmpty(),
+                            )
+                    }
+                AttemptKind.DELETE ->
+                    openRecorderSession(op, route, requireNotNull(password))?.let {
+                        deleteOriginal(op, it, requireNotNull(op.archiveEntry))
+                    }
             }
             if (!gate.canContinue(op.ticket, connectionEpoch))
                 op.record =
@@ -767,7 +922,12 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
             runCatching { activeProbe?.close() }
             activeProbe = null
             if (
-                op.record.kind == AttemptKind.ARCHIVE ||
+                op.record.kind in
+                    setOf(AttemptKind.SETTINGS, AttemptKind.PASSWORD_CHANGE, AttemptKind.DELETE)
+            )
+                op.session?.let { op.record = op.record.copy(response = it.lastResponse) }
+            if (
+                op.record.kind != AttemptKind.VIDEO ||
                     (op.record.kind == AttemptKind.VIDEO &&
                         (rtsp?.videoAdvertised != true ||
                             !gate.canContinue(op.ticket, connectionEpoch)))
@@ -921,7 +1081,7 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
         if (entry == null) loadArchiveIndex(op, session) else downloadOriginal(op, session, entry)
     }
 
-    private fun loadArchiveIndex(op: Operation, session: RecorderSession) {
+    private fun loadArchiveIndex(op: Operation, session: RecorderSession): List<RecorderFile> {
         val folder = File(app.cacheDir, "archive-index").apply { mkdirs() }
         val partial = File.createTempFile("index-", ".part", folder)
         try {
@@ -945,9 +1105,27 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
                     summary = "Записей в архиве: ${files.size}",
                     status = AttemptStatus.SUCCESS,
                 )
+            return files
         } finally {
             partial.delete()
         }
+    }
+
+    private fun deleteOriginal(op: Operation, session: RecorderSession, entry: RecorderFile) {
+        val files = loadArchiveIndex(op, session)
+        if (files.none { it.id == entry.id })
+            throw java.io.IOException("Запись изменилась или уже удалена. Обновите список.")
+        if (!gate.canContinue(op.ticket, connectionEpoch))
+            throw java.io.IOException("Удаление отменено")
+        session.deleteRecording(entry)
+        val remaining = loadArchiveIndex(op, session)
+        if (remaining.any { it.remotePath == entry.remotePath })
+            throw java.io.IOException("Удаление записи не подтверждено обновлённым списком.")
+        op.record =
+            op.record.copy(
+                summary = "Запись удалена с регистратора. Копия на телефоне сохранена.",
+                status = AttemptStatus.SUCCESS,
+            )
     }
 
     private fun downloadOriginal(op: Operation, session: RecorderSession, entry: RecorderFile) {
@@ -1280,51 +1458,60 @@ class MazLensViewModel(application: Application, savedState: SavedStateHandle) :
 
     private fun complete(op: Operation, record: AttemptRecord) {
         if (current?.ticket != op.ticket) return
-        gate.finish(op.ticket)
+        val publish = gate.finish(op.ticket, connectionEpoch) && foreground
         current = null
         _state.update {
-            it.copy(
-                busy = false,
-                operationKind = null,
-                operationLabel = "",
-                latestAccess =
-                    if (record.kind == AttemptKind.ACCESS || record.kind == AttemptKind.BASELINE)
-                        record
-                    else it.latestAccess,
-                passwordCheck =
-                    if (
-                        op.checkingPassword &&
-                            op.ticket.connectionEpoch == connectionEpoch &&
-                            record.status != AttemptStatus.CANCELLED
-                    )
-                        record
-                    else it.passwordCheck,
-                video =
-                    if (
-                        record.kind == AttemptKind.VIDEO &&
-                            op.ticket.connectionEpoch == connectionEpoch
-                    )
-                        it.video.copy(
-                            checking = false,
-                            previewing = false,
-                            player = null,
-                            message = record.summary,
-                            problem = ProblemExplainer.forRecord(record),
+            it.completeRecorderSettings(
+                    record,
+                    op.connection.recorderId,
+                    op.settingsResult,
+                    op.newPassword,
+                    publish,
+                )
+                .copy(
+                    busy = false,
+                    operationKind = null,
+                    operationLabel = "",
+                    latestAccess =
+                        if (
+                            record.kind == AttemptKind.ACCESS || record.kind == AttemptKind.BASELINE
                         )
-                    else it.video,
-                archive =
-                    if (
-                        record.kind == AttemptKind.ARCHIVE &&
-                            op.ticket.connectionEpoch == connectionEpoch
-                    )
-                        it.archive.copy(
-                            loading = false,
-                            downloadingId = null,
-                            message = record.summary,
-                            problem = ProblemExplainer.forRecord(record),
+                            record
+                        else it.latestAccess,
+                    passwordCheck =
+                        if (
+                            op.checkingPassword &&
+                                op.ticket.connectionEpoch == connectionEpoch &&
+                                record.status != AttemptStatus.CANCELLED
                         )
-                    else it.archive.copy(loading = false, downloadingId = null),
-            )
+                            record
+                        else it.passwordCheck,
+                    video =
+                        if (
+                            record.kind == AttemptKind.VIDEO &&
+                                op.ticket.connectionEpoch == connectionEpoch
+                        )
+                            it.video.copy(
+                                checking = false,
+                                previewing = false,
+                                player = null,
+                                message = record.summary,
+                                problem = ProblemExplainer.forRecord(record),
+                            )
+                        else it.video,
+                    archive =
+                        if (
+                            record.kind in setOf(AttemptKind.ARCHIVE, AttemptKind.DELETE) &&
+                                op.ticket.connectionEpoch == connectionEpoch
+                        )
+                            it.archive.copy(
+                                loading = false,
+                                downloadingId = null,
+                                message = record.summary,
+                                problem = ProblemExplainer.forRecord(record),
+                            )
+                        else it.archive.copy(loading = false, downloadingId = null),
+                )
         }
     }
 

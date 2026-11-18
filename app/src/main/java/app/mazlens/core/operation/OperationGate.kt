@@ -26,12 +26,16 @@ class OperationGate {
         if (current == ticket) cancelled = true
     }
 
+    /**
+     * Release after cleanup/persistence and return whether the terminal result is still current.
+     */
     @Synchronized
-    fun finish(ticket: Ticket): Boolean {
+    fun finish(ticket: Ticket, epoch: Long): Boolean {
         if (current != ticket) return false
+        val publish = canContinue(ticket, epoch)
         current = null
         cancelled = false
-        return true
+        return publish
     }
 
     @Synchronized fun active() = current != null

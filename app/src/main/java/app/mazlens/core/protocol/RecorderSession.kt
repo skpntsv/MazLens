@@ -1,5 +1,7 @@
 package app.mazlens.core.protocol
 
+import app.mazlens.core.archive.RecorderFile
+import app.mazlens.core.archive.validateForStorage
 import java.io.ByteArrayOutputStream
 import java.io.EOFException
 import java.io.File
@@ -57,6 +59,10 @@ class RecorderSession(
     @Volatile private var data: Socket? = null
     @Volatile
     var disconnectReason: String? = null
+        private set
+
+    @Volatile
+    var lastResponse: String = ""
         private set
 
     val localAddress: String
@@ -184,6 +190,60 @@ class RecorderSession(
                     error is SocketTimeoutException && !cancelled && disconnectReason == null
                 close()
                 CommandResult(false, summary, null, timedOut)
+            }
+        }
+
+    fun readSettings(): RecorderSettings =
+        synchronized(operation) {
+            try {
+                requireOwned()
+                val reply =
+                    exchange(JSONObject().put("token", token).put("msg_id", 3), 3, requestTimeoutMs)
+                requireSuccess(reply)
+                RecorderSettings.parse(reply.json)
+            } catch (error: IOException) {
+                close()
+                throw error
+            }
+        }
+
+    fun updateSettings(expected: RecorderSettings, updated: RecorderSettings): RecorderSettings =
+        synchronized(operation) {
+            try {
+                val current = readSettings()
+                if (!current.matches(expected))
+                    throw IOException("Настройки изменились. Прочитайте их заново.")
+                requireSuccess(
+                    exchange(updated.request(token), RecorderSettings.WRITE_SETTINGS, 6000)
+                )
+                val verified = readSettings()
+                if (!verified.matches(updated))
+                    throw IOException("Сохранение настроек не подтверждено повторным чтением.")
+                verified
+            } catch (error: IOException) {
+                close()
+                throw error
+            }
+        }
+
+    fun deleteRecording(entry: RecorderFile) =
+        synchronized(operation) {
+            entry.validateForStorage()
+            try {
+                requireOwned()
+                requireSuccess(
+                    exchange(
+                        JSONObject()
+                            .put("token", token)
+                            .put("msg_id", 1287)
+                            .put("param", entry.remotePath),
+                        1287,
+                        requestTimeoutMs,
+                    )
+                )
+            } catch (error: IOException) {
+                close()
+                throw error
             }
         }
 
@@ -382,7 +442,8 @@ class RecorderSession(
             synchronized(state) {
                 while (true) {
                     ensureConnected()
-                    if (waiting.replies.isNotEmpty()) return waiting.replies.removeFirst()
+                    if (waiting.replies.isNotEmpty())
+                        return waiting.replies.removeFirst().also { lastResponse = it.raw }
                     waitUntil(until)
                 }
             }

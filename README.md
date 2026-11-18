@@ -2,7 +2,7 @@
 
 An independent Android viewer for Mazda/Kenwood dashcams, built with Kotlin and Jetpack Compose.
 
-**Version 0.1.1 · Android 8.0+ · Russian interface**
+**Version 0.9.0 · Android 8.0+ · Russian interface**
 
 MazLens connects directly to a recorder over Wi-Fi Direct. It can show the front or rear camera, list recordings, download an original to the phone, and play or share saved files without a recorder connection. There is no account, server or analytics service.
 
@@ -16,7 +16,7 @@ This is an early public release. It is not affiliated with Mazda or JVCKENWOOD.
 | `C9KA_V6_580` | Model identifier recognized; not tested on hardware |
 | Other recorders | Not verified |
 
-A matching car model or Wi-Fi network name alone does not establish compatibility. The latest same-session camera-switching change and rear-camera downloads still need a hardware check. Automated tests use simulated recorders and synthetic video.
+A matching car model or Wi-Fi network name alone does not establish compatibility. Same-session camera switching, rear-camera downloads, settings changes, password changes and remote deletion still need hardware checks. Automated tests use simulated recorders and synthetic video.
 
 ## Use
 
@@ -27,6 +27,9 @@ Download the signed APK from [GitHub Releases](https://github.com/skpntsv/MazLen
 3. Enter the recorder password and select **Войти с паролем**. Android Wi-Fi pairing and the recorder's own login are separate steps.
 4. Open **Камеры** for a live preview, or **Записи** to load the archive and download a recording.
 5. Open **На телефоне** to play downloaded videos, seek, or share an original through Android.
+6. Open **Настройки** and select **Прочитать настройки** to load recording, parking and sound options. Edit the form, then confirm **Применить** to save and verify the result. Standard values only fill the form; they do not reset the password or delete recordings.
+
+Password changes use a separate confirmed action. If the result is uncertain, enter the active password manually before further operations. In **Записи**, remote deletion requires confirmation and an updated archive check; it never removes a downloaded phone copy.
 
 Access diagnostics are available under **Диагностика**. On the tested firmware, a model-only session can return the recorder's settings, including its password. This behavior is firmware-specific and is not a promise of password recovery on other models.
 
@@ -35,7 +38,8 @@ Current limits:
 - Live preview stops after 30 seconds.
 - Download the whole original before offline playback; one foreground transfer at a time.
 - Leaving the app or losing the connection cancels a transfer. There is no resume or background download yet.
-- No deletion or formatting of the recorder's SD card, settings editor, maps or batch downloads.
+- No SD-card formatting, maps or batch downloads/deletion.
+- Settings require a complete supported snapshot; missing or unknown values block editing. A changed snapshot must be reread before applying a draft.
 - A recorder may pause recording while a viewer is connected. Its GPS/motion restrictions still apply.
 
 MazLens uses the application ID `app.mazlens` and installs separately from the earlier DVR Direct prototype. Its private history and downloaded files are not migrated automatically. Share any files you want to keep from the old app before uninstalling it.

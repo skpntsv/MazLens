@@ -31,6 +31,8 @@ class MazLensAppTest {
         compose.onNodeWithTag("tab_video").performClick()
         compose.onNodeWithTag("video_screen").performScrollToNode(hasTestTag("video_run"))
         compose.onNodeWithTag("video_run").assertIsNotEnabled()
+        compose.onNodeWithTag("tab_settings").performClick()
+        compose.onNodeWithTag("settings_read").assertIsNotEnabled()
         compose.onNodeWithTag("tab_connection").performClick()
         compose.onNodeWithTag("discover").assertIsEnabled()
     }

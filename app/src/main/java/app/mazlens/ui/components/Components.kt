@@ -163,6 +163,9 @@ fun attemptKindLabel(kind: AttemptKind): String =
         AttemptKind.BASELINE -> "Исходная проверка"
         AttemptKind.ACCESS -> "Доступ"
         AttemptKind.VIDEO -> "Видео"
+        AttemptKind.SETTINGS -> "Настройки"
+        AttemptKind.PASSWORD_CHANGE -> "Смена пароля"
+        AttemptKind.DELETE -> "Удаление записи"
     }
 
 fun attemptStatusLabel(status: AttemptStatus): String =

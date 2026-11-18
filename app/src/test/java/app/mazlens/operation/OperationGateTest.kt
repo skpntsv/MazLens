@@ -24,7 +24,7 @@ class OperationGateTest {
         assertNull(gate.begin(10))
         gate.cancel(ticket)
         assertNull(gate.begin(10))
-        assertTrue(gate.finish(ticket))
+        assertFalse(gate.finish(ticket, 10))
         assertNotNull(gate.begin(10))
     }
 }

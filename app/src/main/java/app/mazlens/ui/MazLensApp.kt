@@ -47,12 +47,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.mazlens.BuildConfig
 import app.mazlens.app.MazLensUiState
+import app.mazlens.core.protocol.RecorderSetting
 import app.mazlens.data.history.AttemptRecord
 import app.mazlens.feature.access.AccessScreen
 import app.mazlens.feature.archive.ArchiveScreen
 import app.mazlens.feature.connection.ConnectionScreen
 import app.mazlens.feature.history.HistoryScreen
 import app.mazlens.feature.player.SavedPlayerRoute
+import app.mazlens.feature.settings.SettingsScreen
 import app.mazlens.feature.video.VideoScreen
 import app.mazlens.ui.theme.MazLensTheme
 
@@ -80,6 +82,12 @@ data class MazLensActions(
     val onPlaySaved: (String) -> Unit = {},
     val onShareSaved: (String) -> Unit = {},
     val onStopSaved: () -> Unit = {},
+    val onReadSettings: () -> Unit = {},
+    val onEditSetting: (RecorderSetting, Int) -> Unit = { _, _ -> },
+    val onApplySettings: () -> Unit = {},
+    val onDefaultSettings: () -> Unit = {},
+    val onChangeRecorderPassword: (String, String) -> Unit = { _, _ -> },
+    val onDeleteRecording: (String, Long) -> Unit = { _, _ -> },
 )
 
 private enum class Destination(val title: String, val tag: String, val icon: ImageVector) {
@@ -87,6 +95,7 @@ private enum class Destination(val title: String, val tag: String, val icon: Ima
     ACCESS("Проверки", "tab_access", Icons.Default.Lock),
     VIDEO("Камеры", "tab_video", Icons.Default.PlayArrow),
     ARCHIVE("Записи", "tab_archive", Icons.AutoMirrored.Filled.List),
+    SETTINGS("Настройки", "tab_settings", Icons.Default.Settings),
     HISTORY("Журнал", "tab_history", Icons.AutoMirrored.Filled.List),
 }
 
@@ -99,7 +108,8 @@ fun MazLensApp(state: MazLensUiState, actions: MazLensActions) {
     val destination =
         Destination.entries.firstOrNull { it.name == selectedTab } ?: Destination.CONNECTION
     val diagnostic = destination == Destination.ACCESS || destination == Destination.HISTORY
-    val mainTabs = listOf(Destination.CONNECTION, Destination.VIDEO, Destination.ARCHIVE)
+    val mainTabs =
+        listOf(Destination.CONNECTION, Destination.VIDEO, Destination.ARCHIVE, Destination.SETTINGS)
     val openRecord: (AttemptRecord) -> Unit = { record ->
         detailId = record.id
         selectedTab = Destination.HISTORY.name
@@ -190,6 +200,7 @@ fun MazLensApp(state: MazLensUiState, actions: MazLensActions) {
                                 Destination.CONNECTION -> ConnectionScreen(state, actions)
                                 Destination.ACCESS -> AccessScreen(state, actions, openRecord)
                                 Destination.VIDEO -> VideoScreen(state, actions)
+                                Destination.SETTINGS -> SettingsScreen(state, actions)
                                 Destination.ARCHIVE ->
                                     screenState.SaveableStateProvider("archive") {
                                         ArchiveScreen(state, actions)

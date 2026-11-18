@@ -7,6 +7,9 @@ enum class AttemptKind {
     ACCESS,
     VIDEO,
     ARCHIVE,
+    SETTINGS,
+    PASSWORD_CHANGE,
+    DELETE,
 }
 
 enum class AttemptStatus {

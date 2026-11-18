@@ -59,5 +59,31 @@ class ProblemExplainerTest {
         assertFalse(text(requireNotNull(ProblemExplainer.forRecord(r))).contains(secret))
         assertFalse(text(explain(summary = secret)).contains(secret))
         assertNull(ProblemExplainer.forConnection(secret))
+        for (kind in
+            listOf(AttemptKind.SETTINGS, AttemptKind.PASSWORD_CHANGE, AttemptKind.DELETE)) {
+            val problem =
+                requireNotNull(ProblemExplainer.forRecord(r.copy(kind = kind, timedOut = true)))
+            assertFalse(text(problem).contains(secret))
+            assertFalse(problem.action.contains("повторите операцию", ignoreCase = true))
+        }
+    }
+
+    @Test
+    fun controlDenialsExplainValidatedCodesButUncertainResultsDoNotRecommendBlindRetry() {
+        for ((kind, id) in
+            listOf(
+                AttemptKind.SETTINGS to 3,
+                AttemptKind.PASSWORD_CHANGE to 268435457,
+                AttemptKind.DELETE to 1287,
+            )) {
+            val denied = record("""{"msg_id":$id,"rval":-52}""").copy(kind = kind)
+            assertEquals("rval=-52", ProblemExplainer.forRecord(denied)!!.details)
+            val uncertain = denied.copy(response = """{"msg_id":$id,"rval":0}""", timedOut = true)
+            val problem = ProblemExplainer.forRecord(uncertain)!!
+            assertFalse(problem.action.contains("повторите операцию", ignoreCase = true))
+            assertNotNull(
+                ProblemExplainer.forRecord(uncertain.copy(status = AttemptStatus.CANCELLED))
+            )
+        }
     }
 }

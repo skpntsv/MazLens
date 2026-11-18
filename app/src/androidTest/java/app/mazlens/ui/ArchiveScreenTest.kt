@@ -26,6 +26,68 @@ class ArchiveScreenTest {
     @get:Rule val compose = createComposeRule()
 
     @Test
+    fun remoteDeleteIsConfirmedAndCannotFollowAChangedRecorderOrRemovePhoneCopies() {
+        val entry = recording(1).copy(recorderId = "recorder-a")
+        var state by
+            mutableStateOf(
+                MazLensUiState(
+                    connection = ConnectionUiState(connected = true, recorderId = "recorder-a"),
+                    loadingHistory = false,
+                    archive =
+                        ArchiveUiState(
+                            recorderId = "recorder-a",
+                            files = listOf(entry),
+                            loadingSaved = false,
+                            saved = listOf(SavedRecording(entry, File("saved.mp4"), 1)),
+                        ),
+                )
+            )
+        var deletions = 0
+        compose.setContent {
+            MazLensApp(
+                state,
+                MazLensActions(
+                    onDeleteRecording = { id, epoch ->
+                        assertEquals(entry.id, id)
+                        assertEquals(state.recorderActionEpoch, epoch)
+                        deletions++
+                        state = state.copy(archive = state.archive.copy(files = emptyList()))
+                    }
+                ),
+            )
+        }
+        compose.onNodeWithTag("tab_archive").performClick()
+        compose
+            .onNodeWithTag("archive_screen")
+            .performScrollToNode(hasTestTag("delete_${entry.id}"))
+        compose.onNodeWithTag("delete_${entry.id}").performClick()
+        compose.runOnIdle { assertEquals(0, deletions) }
+        compose.onNodeWithTag("delete_dismiss").performClick()
+        compose.onNodeWithTag("delete_${entry.id}").performClick()
+        compose.runOnIdle {
+            state = state.copy(connection = state.connection.copy(recorderId = "recorder-b"))
+        }
+        compose.onNodeWithTag("delete_confirm").assertDoesNotExist()
+        compose.runOnIdle {
+            state = state.copy(connection = state.connection.copy(recorderId = "recorder-a"))
+        }
+        compose.onNodeWithTag("delete_confirm").assertDoesNotExist()
+        compose.onNodeWithTag("delete_${entry.id}").performClick()
+        compose.runOnIdle {
+            // Same connection and archive after a background/foreground round trip.
+            state = state.backgrounded()
+        }
+        compose.onNodeWithTag("delete_confirm").assertDoesNotExist()
+        compose.runOnIdle { assertEquals(0, deletions) }
+        compose.onNodeWithTag("delete_${entry.id}").performClick()
+        compose.onNodeWithTag("delete_confirm").performClick()
+        compose.runOnIdle {
+            assertEquals(1, deletions)
+            assertEquals(entry.id, state.archive.saved.single().entry.id)
+        }
+    }
+
+    @Test
     fun archiveDownloadUsesSelectedEntryAndNeverStartsOnOpeningTab() {
         val entry = recording(2).copy(recorderId = "recorder-b")
         var requested: String? = null

@@ -1,5 +1,6 @@
 package app.mazlens.core.protocol
 
+import app.mazlens.core.archive.RecorderFile
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
@@ -20,6 +21,159 @@ import org.junit.Test
 
 /** Runs at the socket boundary; no phone, Wi-Fi, network or Android framework is used. */
 class RecorderSessionTest {
+    @Test
+    fun settingsUpdateChecksBaselineAndReadbackWithHeartbeatsOnTheSameSession() {
+        val recorder = Recorder()
+        var settings = settingsReply()
+        recorder.onCommand = { request ->
+            when (val id = request.getInt("msg_id")) {
+                257 -> recorder.command.feed("{\"msg_id\":257,\"rval\":0,\"param\":23}")
+                3 -> recorder.command.feed("{\"msg_id\":1793}" + settings)
+                268435457 -> {
+                    assertEquals(23, request.getInt("token"))
+                    settings = JSONObject(request.toString()).put("msg_id", 3).put("rval", 0)
+                    recorder.command.feed("{\"msg_id\":268435457,\"rval\":0}")
+                }
+                258 -> recorder.command.feed("{\"msg_id\":$id,\"rval\":0}")
+            }
+        }
+        val session = RecorderSession(recorder, java.util.function.Consumer {})
+        try {
+            assertTrue(session.open("recorder", 7878, 8787, "model", "OwnerPwd", 700).opened)
+            val before = session.readSettings()
+            val desired = before.with(RecorderSetting.PARKING_START, 6)
+            assertTrue(session.updateSettings(before, desired).matches(desired))
+            assertEquals(1, recorder.commands.count { it.optInt("msg_id") == 257 })
+            assertEquals(1, recorder.commands.count { it.optInt("msg_id") == 268435457 })
+            assertEquals(3, recorder.commands.count { it.optInt("msg_id") == 3 })
+            assertEquals(3, recorder.commands.count { it.optInt("msg_id") == 1793 })
+            session.finish()
+        } finally {
+            session.close()
+        }
+    }
+
+    @Test
+    fun refusesConflictsRejectionsAndUnconfirmedReadbackWithoutRetryingWrite() {
+        for (failure in listOf("conflict", "rejection", "readback")) {
+            val recorder = Recorder()
+            var reads = 0
+            recorder.onCommand = { request ->
+                when (request.getInt("msg_id")) {
+                    257 -> recorder.command.feed("{\"msg_id\":257,\"rval\":0,\"param\":23}")
+                    3 -> {
+                        val reply = settingsReply()
+                        if (failure == "conflict" && reads++ > 0) reply.put("m.qual", 0)
+                        recorder.command.feed(reply.toString())
+                    }
+                    268435457 ->
+                        recorder.command.feed(
+                            "{\"msg_id\":268435457,\"rval\":${if (failure == "rejection") -29 else 0}}"
+                        )
+                }
+            }
+            val session = RecorderSession(recorder, java.util.function.Consumer {})
+            try {
+                assertTrue(session.open("recorder", 7878, 8787, "model", "OwnerPwd", 700).opened)
+                val before = session.readSettings()
+                assertThrows(IOException::class.java) {
+                    session.updateSettings(before, before.with(RecorderSetting.QUALITY, 0))
+                }
+                assertEquals(
+                    if (failure == "conflict") 0 else 1,
+                    recorder.commands.count { it.optInt("msg_id") == 268435457 },
+                )
+                assertTrue(recorder.command.closed && recorder.data.closed)
+            } finally {
+                session.close()
+            }
+        }
+    }
+
+    @Test
+    fun settingsReadTimeoutAndWriteCancellationCloseOwnedSockets() {
+        val recorder = Recorder()
+        val session = RecorderSession(recorder, java.util.function.Consumer {})
+        try {
+            assertTrue(session.open("recorder", 7878, 8787, "model", "OwnerPwd", 150).opened)
+            assertThrows(SocketTimeoutException::class.java) { session.readSettings() }
+            assertThrows(IOException::class.java) { session.readSettings() }
+            assertEquals(1, recorder.commands.count { it.optInt("msg_id") == 3 })
+        } finally {
+            session.close()
+        }
+        val second = Recorder()
+        val writing = CountDownLatch(1)
+        second.onCommand = { request ->
+            when (request.getInt("msg_id")) {
+                257 -> second.command.feed("{\"msg_id\":257,\"rval\":0,\"param\":23}")
+                3 -> second.command.feed(settingsReply().toString())
+                268435457 -> writing.countDown()
+            }
+        }
+        val active = RecorderSession(second, java.util.function.Consumer {})
+        val worker = Executors.newSingleThreadExecutor()
+        try {
+            assertTrue(active.open("recorder", 7878, 8787, "model", "OwnerPwd", 700).opened)
+            val before = active.readSettings()
+            val result =
+                worker.submit<Boolean> {
+                    try {
+                        active.updateSettings(before, before.withPassword("NewPwd123"))
+                        false
+                    } catch (_: IOException) {
+                        true
+                    }
+                }
+            assertTrue(writing.await(2, TimeUnit.SECONDS))
+            active.close()
+            assertTrue(result.get(2, TimeUnit.SECONDS))
+            assertEquals(1, second.commands.count { it.optInt("msg_id") == 268435457 })
+            assertTrue(second.command.closed && second.data.closed)
+        } finally {
+            active.close()
+            worker.shutdownNow()
+        }
+    }
+
+    @Test
+    fun deleteUsesAuthenticatedValidatedPathAndDoesNotRetryAnUncertainCommand() {
+        val entry =
+            RecorderFile(
+                "000000000001",
+                1,
+                1,
+                10,
+                "2026-01-01 00:00:00",
+                "/tmp/SD0/NORMAL/000000000001.MP4",
+                "recorder",
+            )
+        for (status in listOf(0, -29, null)) {
+            val recorder = Recorder()
+            val session = RecorderSession(recorder, java.util.function.Consumer {})
+            try {
+                assertTrue(session.open("recorder", 7878, 8787, "model", "OwnerPwd", 150).opened)
+                recorder.onCommand = { request ->
+                    if (request.getInt("msg_id") == 1287 && status != null)
+                        recorder.command.feed("{\"msg_id\":1287,\"rval\":$status}")
+                }
+                assertThrows(IOException::class.java) {
+                    session.deleteRecording(entry.copy(remotePath = "/tmp/SD0/../private"))
+                }
+                if (status == 0) session.deleteRecording(entry)
+                else {
+                    assertThrows(IOException::class.java) { session.deleteRecording(entry) }
+                    assertThrows(IOException::class.java) { session.deleteRecording(entry) }
+                }
+                val request = recorder.commands.single { it.optInt("msg_id") == 1287 }
+                assertEquals(23, request.getInt("token"))
+                assertEquals(entry.remotePath, request.getString("param"))
+            } finally {
+                session.close()
+            }
+        }
+    }
+
     @Test
     fun answersIdleAndInterleavedHeartbeatsOnlyWithItsValidatedToken() {
         val recorder = Recorder()

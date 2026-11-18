@@ -51,7 +51,12 @@ data class MazLensUiState(
     val archive: ArchiveUiState = ArchiveUiState(),
     val passwordCheck: AttemptRecord? = null,
     val passwordRecorderId: String = "",
+    val settings: SettingsUiState = SettingsUiState(),
+    val recorderActionEpoch: Long = 0,
 ) {
+    fun backgrounded(): MazLensUiState =
+        copy(settings = SettingsUiState(), recorderActionEpoch = recorderActionEpoch + 1)
+
     val passwordValid: Boolean
         get() = passwordInput.length in 8..31
 

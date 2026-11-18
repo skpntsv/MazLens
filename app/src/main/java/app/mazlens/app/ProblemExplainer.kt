@@ -1,6 +1,7 @@
 package app.mazlens.app
 
 import app.mazlens.core.protocol.RecorderErrors
+import app.mazlens.data.history.AttemptKind
 import app.mazlens.data.history.AttemptRecord
 import app.mazlens.data.history.AttemptStatus
 import java.math.BigDecimal
@@ -16,11 +17,39 @@ data class ProblemExplanation(
 
 object ProblemExplainer {
     fun forRecord(record: AttemptRecord): ProblemExplanation? {
+        val control =
+            record.kind in
+                setOf(AttemptKind.SETTINGS, AttemptKind.PASSWORD_CHANGE, AttemptKind.DELETE)
         if (
             record.status !in
-                setOf(AttemptStatus.FAILED, AttemptStatus.REJECTED, AttemptStatus.INTERRUPTED)
+                setOf(AttemptStatus.FAILED, AttemptStatus.REJECTED, AttemptStatus.INTERRUPTED) &&
+                !(control && record.status == AttemptStatus.CANCELLED)
         )
             return null
+        if (control && record.status != AttemptStatus.CANCELLED)
+            primaryCode(record.response)
+                ?.takeIf { it != 0 }
+                ?.let {
+                    return recorder(it)
+                }
+        if (record.kind == AttemptKind.PASSWORD_CHANGE)
+            return ProblemExplanation(
+                "Смена пароля не подтверждена",
+                "Действующий пароль регистратора не установлен. Старый пароль автоматически использоваться не будет.",
+                "Укажите действующий пароль в разделе «Подключение» и заново прочитайте настройки.",
+            )
+        if (record.kind == AttemptKind.DELETE)
+            return ProblemExplanation(
+                "Удаление не подтверждено",
+                "Не удалось подтвердить отсутствие записи на регистраторе. Копия на телефоне не изменена.",
+                "Обновите список записей и проверьте результат перед новой попыткой.",
+            )
+        if (record.kind == AttemptKind.SETTINGS)
+            return ProblemExplanation(
+                "Настройки не подтверждены",
+                "Не удалось получить полный снимок или подтвердить сохранение настроек.",
+                "Прочитайте настройки заново и проверьте значения перед сохранением.",
+            )
         if (record.timedOut) return timeout()
         primaryCode(record.response)
             ?.takeIf { it != 0 }
@@ -297,7 +326,8 @@ object ProblemExplainer {
     private fun primaryCode(response: String): Int? =
         try {
             val json = JSONObject(response)
-            if (strictInt(json.opt("msg_id")) in setOf(257, 3, 2)) strictInt(json.opt("rval"))
+            if (strictInt(json.opt("msg_id")) in setOf(257, 3, 2, 268435457, 1287))
+                strictInt(json.opt("rval"))
             else null
         } catch (_: Exception) {
             null

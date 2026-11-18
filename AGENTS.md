@@ -90,6 +90,7 @@ Use these responsibility boundaries to narrow searches:
 - Preserve a valid saved original when a repeat download fails or returns different content.
 - Keep history bounded and durable, recover interrupted attempts, and retain the private export snapshot while Android's document picker owns it.
 - Keep entered passwords in memory, bound to the verified recorder ID across temporary disconnections. Clear them when another recorder connects, and never send them without a matching nonblank recorder ID, even if a network endpoint is connected. Recover credentials only from successful history with the same recorder ID, never display names or unscoped legacy records; an invalid explicitly entered password must not silently fall back to a stored one.
+- Persist a password-change attempt before sending it. Treat it as a credential-recovery barrier: interrupted or uncertain rotation must never fall through to an older password. Keep settings drafts connection-scoped; validate a fresh baseline and verify bulk changes by readback. Remote deletion must verify the current archive entry and preserve phone copies.
 - Keep cloud and device-transfer backup disabled. Share recordings only through the restricted `${applicationId}.recordings` FileProvider with temporary read permission; do not broaden it to other private directories.
 - Treat diagnostic responses, traces, clipboard copies, and ZIP reports as sensitive and not anonymized. Keep raw data private and exclude it from public logs, issues, and fixtures.
 

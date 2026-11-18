@@ -5,6 +5,44 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class VideoCredentialsTest {
+    @get:org.junit.Rule val temporary = org.junit.rules.TemporaryFolder()
+
+    @Test
+    fun rotationIsADurableBarrierAgainstOldCredentialsEvenAfterInterruption() {
+        val old = record("recorder-a", "OldPwd123").copy(id = "old", timestamp = 1)
+        for (status in AttemptStatus.entries) {
+            val rotation =
+                old.copy(
+                    id = "rotation",
+                    timestamp = 2,
+                    kind = AttemptKind.PASSWORD_CHANGE,
+                    status = status,
+                    passwordCandidate = if (status == AttemptStatus.SUCCESS) "NewPwd123" else "",
+                )
+            val history = app.mazlens.data.history.HistoryStore(temporary.newFolder())
+            history.save(old)
+            history.save(rotation)
+            val recovered = history.recoverInterrupted()
+            assertEquals(
+                if (status == AttemptStatus.SUCCESS) "NewPwd123" else null,
+                VideoCredentials.select("", "", "recorder-a", recovered),
+            )
+            assertEquals(
+                "TypedPwd",
+                VideoCredentials.select("TypedPwd", "recorder-a", "recorder-a", recovered),
+            )
+            assertEquals(
+                "OtherPwd",
+                VideoCredentials.select(
+                    "",
+                    "",
+                    "recorder-b",
+                    listOf(rotation, record("recorder-b", "OtherPwd"), old),
+                ),
+            )
+        }
+    }
+
     @Test
     fun enteredPasswordSurvivesDisconnectionOnlyForItsOwner() {
         val disconnected = VideoCredentials.retainEntered("Camera77", "recorder-a", "")

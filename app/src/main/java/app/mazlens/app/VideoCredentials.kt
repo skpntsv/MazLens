@@ -1,5 +1,6 @@
 package app.mazlens.app
 
+import app.mazlens.data.history.AttemptKind
 import app.mazlens.data.history.AttemptRecord
 import app.mazlens.data.history.AttemptStatus
 
@@ -18,11 +19,18 @@ object VideoCredentials {
     ): String? {
         if (entered.isNotEmpty()) return enteredForRecorder(entered, ownerId, recorderId)
         if (recorderId.isBlank()) return null
-        return history
-            .asSequence()
-            .filter { it.status == AttemptStatus.SUCCESS }
-            .filter { it.recorderId == recorderId }
-            .map { it.passwordCandidate }
-            .firstOrNull { it.length in 8..31 && !it.matches(Regex("[*•●]+")) }
+        for (record in history) {
+            if (record.recorderId != recorderId) continue
+            val candidate = record.passwordCandidate
+            if (
+                record.status == AttemptStatus.SUCCESS &&
+                    candidate.length in 8..31 &&
+                    !candidate.matches(Regex("[*•●]+"))
+            )
+                return candidate
+            // An interrupted rotation may have reached the recorder; older credentials are unsafe.
+            if (record.kind == AttemptKind.PASSWORD_CHANGE) return null
+        }
+        return null
     }
 }

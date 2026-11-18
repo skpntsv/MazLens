@@ -1,5 +1,6 @@
 package app.mazlens.feature.archive
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -7,15 +8,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -33,6 +38,7 @@ import java.util.Locale
 fun ArchiveScreen(state: MazLensUiState, actions: MazLensActions) {
     var source by rememberSaveable { mutableIntStateOf(0) }
     var camera by rememberSaveable { mutableIntStateOf(0) }
+    var category by rememberSaveable { mutableIntStateOf(0) }
     val archive = state.archive
     val savedIds = remember(archive.saved) { archive.saved.mapTo(hashSetOf()) { it.entry.id } }
     val remoteEnabled =
@@ -41,7 +47,21 @@ fun ArchiveScreen(state: MazLensUiState, actions: MazLensActions) {
             !state.busy &&
             !state.loadingHistory
     val files = if (source == 0) archive.files else archive.saved.map { it.entry }
-    val visible = files.filter { camera == 0 || it.camera == camera }
+    val visible =
+        files.filter {
+            (camera == 0 || it.camera == camera) && (category == 0 || it.category == category)
+        }
+    var deleteId by
+        remember(
+            archive.files,
+            archive.recorderId,
+            state.connection.recorderId,
+            state.recorderActionEpoch,
+            remoteEnabled,
+            source,
+        ) {
+            mutableStateOf<String?>(null)
+        }
     LazyColumn(
         Modifier.fillMaxSize().testTag("archive_screen"),
         contentPadding = PaddingValues(20.dp),
@@ -124,6 +144,21 @@ fun ArchiveScreen(state: MazLensUiState, actions: MazLensActions) {
                     )
                 }
         }
+        item {
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                (0..7).forEach { value ->
+                    FilterChip(
+                        selected = category == value,
+                        onClick = { category = value },
+                        label = { Text(if (value == 0) "Все типы" else categoryLabel(value)) },
+                        modifier = Modifier.testTag("archive_category_$value"),
+                    )
+                }
+            }
+        }
         if (visible.isEmpty()) {
             item {
                 Text(
@@ -168,9 +203,55 @@ fun ArchiveScreen(state: MazLensUiState, actions: MazLensActions) {
                         Text("Скачать оригинал")
                     }
                 }
+                if (source == 0) {
+                    TextButton(
+                        onClick = { deleteId = entry.id },
+                        enabled =
+                            remoteEnabled &&
+                                state.connection.recorderId.isNotBlank() &&
+                                archive.recorderId == state.connection.recorderId &&
+                                entry.recorderId == state.connection.recorderId,
+                        modifier = Modifier.testTag("delete_${entry.id}"),
+                    ) {
+                        Text("Удалить с регистратора")
+                    }
+                }
             }
         }
     }
+    archive.files
+        .firstOrNull { it.id == deleteId }
+        ?.takeIf { source == 0 && remoteEnabled && it.recorderId == state.connection.recorderId }
+        ?.let { entry ->
+            AlertDialog(
+                onDismissRequest = { deleteId = null },
+                title = { Text("Удалить запись с регистратора?") },
+                text = {
+                    Text(
+                        "${entry.displayName}\nВосстановить запись на регистраторе будет нельзя. Сохранённая копия на телефоне останется."
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            deleteId = null
+                            actions.onDeleteRecording(entry.id, state.recorderActionEpoch)
+                        },
+                        modifier = Modifier.testTag("delete_confirm"),
+                    ) {
+                        Text("Удалить")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { deleteId = null },
+                        modifier = Modifier.testTag("delete_dismiss"),
+                    ) {
+                        Text("Отмена")
+                    }
+                },
+            )
+        }
 }
 
 private fun categoryLabel(category: Int): String =
@@ -179,8 +260,8 @@ private fun categoryLabel(category: Int): String =
         3 -> "Ручная запись"
         4 -> "Парковка"
         5 -> "Парковочное событие"
-        6,
-        7 -> "Фото"
+        6 -> "Фото"
+        7 -> "Памятное фото"
         else -> "Обычная запись"
     }
 
